@@ -6,9 +6,47 @@
 # Contact: sungyun98@postech.ac.kr
 ###############################################################################
 
-__all__ = ['fftshift', 'ifftshift', 'amplitude', 'phase', 'sqmesh', 'freqfilter']
+__all__ = ['MakeSupport', 'fftshift', 'ifftshift', 'amplitude', 'phase', 'sqmesh', 'freqfilter']
 
+import numpy as np
 import torch
+
+def MakeSupport(input, **kwargs):
+    '''
+    generate rectangular or autocorrelation-based support
+
+    input should be fftshifted intensity data for autocorrelation support
+    autocorrelation support is from ShrinkWrap reference
+
+    args:
+        input = numpy float ndarray of size H * W
+
+    kwargs:
+        type = string
+        radius = tuple or list of size 2 (for const)
+        threshold = float (for auto)
+
+    returns:
+        output = numpy float ndarray of size H * W
+    '''
+
+    h = input.shape[0]
+    w = input.shape[1]
+    type = kwargs.pop('type')
+    if type == 'rect':
+        # generate rectangular support
+        ri, rj = kwargs.pop('radius')
+        support = np.zeros_like(input)
+        support[h // 2 - ri:h // 2 + ri, w // 2 - rj:w // 2 + rj] = 1
+    elif type == 'auto':
+        # generate autocorrelation support
+        threshold = kwargs.pop('threshold')
+        support = np.abs(np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(input))))
+        support = support > np.amax(support) * threshold
+    else:
+        raise ValueError
+
+    return support
 
 def fftshift(input):
     '''

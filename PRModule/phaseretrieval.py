@@ -8,13 +8,13 @@
 
 __all__ = ['PhaseRetrieval']
 
-from .func import *
-from .preconditioner import *
-
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from .func import *
+from .preconditioner import *
 
 class GaussianFilter(nn.Module):
     """
@@ -79,7 +79,7 @@ class ShrinkWrap(GaussianFilter):
         super().__init__(size, size)
         self.mesh = self.mesh.squeeze(-1)
         self.register_buffer('filter', self.mesh * 0)
-        self.updateFilter(False)
+        self.update(False)
 
     def update(self, update_sigma = True):
         '''
