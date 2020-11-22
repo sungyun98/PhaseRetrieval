@@ -72,8 +72,9 @@ def PairwiseDistance(input):
     
     # calculate pairwise distance
     n_max = input.shape[0]
-    dist = np.zeros(n_max * (n_max - 1) / 2)
-    for n, (i, j) in tqdm(enumerate(itertools.combinations(range(n_max), 2)), desc = 'pairwise distance'):
+    count = n_max * (n_max - 1) // 2
+    dist = np.zeros(count)
+    for n, (i, j) in tqdm(enumerate(itertools.combinations(range(n_max), 2)), total = count, desc = 'pairwise distance'):
         dist[n] = np.sum(np.abs(input[i] - input[j])) / np.sum(np.abs(input[i] + input[j]))
     
     return dist
@@ -84,7 +85,7 @@ def PRTF(input, ref, mask = None):
     reference = https://doi.org/10.1364/JOSAA.23.001179
     
     input should be aligned r-space data
-    reference should be k-space amplitude data for normalization
+    reference should be fftshifted k-space amplitude data for normalization
     ignore masked value if mask is given
     
     args:
@@ -97,7 +98,7 @@ def PRTF(input, ref, mask = None):
     '''
     
     # get Fourier transform of input
-    freq = np.fft.fft2(input, signal_ndim = 2, onesided = False)
+    freq = np.fft.fftshift(np.fft.fft2(input))
     freq = np.absolute(np.mean(freq, axis = 0))
     
     # normalization
@@ -106,7 +107,7 @@ def PRTF(input, ref, mask = None):
     if mask is not None:
         freq[mask] = 0
     
-    return np.fft.fftshift(freq)
+    return freq
 
 def PSD(input, mask = None):
     '''
