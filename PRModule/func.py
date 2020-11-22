@@ -89,7 +89,7 @@ def amplitude(input):
         output = torch float tensor of size N * 1 * H * W * 1
     '''
 
-    return input.pow(2).sum(dim = 3, keepdim = True).sqrt()
+    return input.pow(2).sum(dim = -1, keepdim = True).sqrt()
 
 def phase(input):
     '''

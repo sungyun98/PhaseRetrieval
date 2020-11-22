@@ -401,16 +401,8 @@ class PhaseRetrieval(nn.Module):
             ratio_update = kwargs.pop('ratio_update')
             threshold = kwargs.pop('threshold')
             self.interval = kwargs.pop('interval')
+            self.register_buffer('initial_support', support)
             self.shrink = ShrinkWrap(threshold, sigma_initial, sigma_limit, ratio_update)
-
-    def getSupport(self):
-        '''
-        get support constraint
-
-        returns:
-            output = torch float tensor of size N * 1 * H * W * 1
-        '''
-        return self.support
 
     def getParameter(self, input, iteration, name = 'parameter'):
         '''
@@ -428,16 +420,16 @@ class PhaseRetrieval(nn.Module):
             step = list
             list = list
         '''
-
+        
         if isinstance(input, (tuple, list)):
-            step = [round(pos) for pos in input[2::2] * iteration]
-            list = input[3::2]
-        elif isinstance(input, float):
+            step = [round(pos * iteration) for pos in input[0::2]]
+            plist = input[1::2]
+        elif isinstance(input, (int, float)):
             step = [0]
-            list = [input]
+            plist = [input]
         else:
             raise ValueError('{} is invalid value for {}.'.format(input, name))
-        return step, list
+        return step, plist
 
     def getAmplitude(self, toggle = False, **kwargs):
         '''
@@ -451,8 +443,8 @@ class PhaseRetrieval(nn.Module):
 
         returns:
             output = torch float tensor of size N * 1 * H * W * 1
-
         '''
+
         if 'u' in kwargs:
             u = kwargs.pop('u')
             u = self.block.projS(u, conj = False)
@@ -463,7 +455,7 @@ class PhaseRetrieval(nn.Module):
         elif 'z' in kwargs:
             z = kwargs.pop('z')
             z = torch.ifft(z, signal_ndim = 2)
-            return self.getAmplitude(u = z)
+            return self.getAmplitude(u = z, toggle = toggle)
 
     def getError(self, a):
         '''
@@ -500,6 +492,7 @@ class PhaseRetrieval(nn.Module):
         args:
             iteration = int
             initial_phase = torch float tensor of size N * 1 * H * W * 2
+            toggle = bool
 
         kwargs:
             beta = float or tuple or list (for HIO)
@@ -508,6 +501,7 @@ class PhaseRetrieval(nn.Module):
             alpha_count = int (for GPS, dpGPS)
             t = float or tuple or list (for GPS)
             s = float or tuple or list (for GPS)
+            inner_iter = int (for dpGPS)
 
         returns:
             output = torch float tensor of size N * 1 * H * W * (1 or 2)
@@ -516,11 +510,12 @@ class PhaseRetrieval(nn.Module):
 
         size_batch = initial_phase.size(0)
         device = initial_phase.device
-        if self.shrinkwrap and self.support.size(0) == 1:
+        if self.shrinkwrap and self.initial_support.size(0) == 1:
             # allocate support for each data
-            self.support = torch.repeat_interleave(self.support, repeats = initial_phase.size(0), dim = 0)
+            self.support = torch.repeat_interleave(self.initial_support, repeats = initial_phase.size(0), dim = 0)
             self.block.updateSupport(self.support)
         # phase retrieval iteration
+        var = {}
         u_best = z_best = y_best = None
         error_min = torch.zeros(size_batch, device = device)
         path = torch.zeros(size_batch, iteration, device = device)
@@ -528,8 +523,6 @@ class PhaseRetrieval(nn.Module):
             # phase retrieval
             if self.algorithm in ['HIO']:
                 # initialize
-                var = dict.fromkeys(['u', 'beta', 'toggle'], None)
-                bp_step = beta_step = beta_list = None
                 if n == 0:
                     u_best = torch.ifft(self.magnitude * initial_phase, signal_ndim = 2)
                     beta_step, beta_list = self.getParameter(kwargs.pop('beta'), iteration, name = 'beta')
@@ -537,10 +530,12 @@ class PhaseRetrieval(nn.Module):
                 # update parameter
                 refresh = False
                 if n < bp_step:
+                    var['toggle'] = False
                     if n in beta_step:
                         var['beta'] = beta_list[beta_step.index(n)]
                         refresh = True
                 else:
+                    var['toggle'] = True
                     var['beta'] = 1 - (n - bp_step) / (iteration - bp_step)
                 # refresh when parameter updated
                 if refresh:
@@ -558,8 +553,6 @@ class PhaseRetrieval(nn.Module):
 
             elif self.algorithm in ['GPS-R', 'GPS-F']:
                 # initialize
-                var = dict.fromkeys(['z', 'y', 'sigma', 'alpha', 't', 's'], None)
-                sigma_step = sigma_list = alpha_step = alpha_list = t_step = t_list = s_step = s_list = None
                 if n == 0:
                     z_best = self.magnitude * initial_phase
                     y_best = torch.zeros_like(initial_phase)
@@ -599,8 +592,6 @@ class PhaseRetrieval(nn.Module):
 
             elif self.algorithm in ['dpGPS-R', 'dpGPS-F']:
                 # initialize
-                var = dict.fromkeys(['z', 'y', 'sigma', 'alpha', 'inner_iter'], None)
-                sigma_step = sigma_list = alpha_step = alpha_list = t_step = t_list = s_step = s_list = None
                 if n == 0:
                     z_best = self.magnitude * initial_phase
                     y_best = torch.zeros_like(initial_phase)

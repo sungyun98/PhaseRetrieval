@@ -169,13 +169,13 @@ class Preconditioner():
     input should be k-space amplitude data, not intensity data
     input value should be scaled to photon count, not detector count
     '''
-    def __init__(self, cnum = 16, path = './pretrained.pth'):
+    def __init__(self, cnum = 16, path = './PRModule/pretrained.pth'):
         '''
         load pretrained denoising network
         
         args:
             cnum = integer (default = 0.25)
-            path = string (default = './pretrained.pth')
+            path = string (default = './PRModule/pretrained.pth')
         '''
         super().__init__()
         
@@ -200,18 +200,16 @@ class Preconditioner():
         w = input.size(3)
         if h != height or w != width:
             if h > height:
-                c1 = (h - height) // 2
-                c2 = (h - height) - c1
-                input = input[:, :, h // 2 - c1:h // 2 + c2, :, :]
-            else:
+                c = height // 2
+                input = input[:, :, h // 2 - c:h // 2 + c, :, :]
+            elif h < height:
                 p2 = (height - h) // 2
                 p1 = (height - h) - p2
                 input = F.pad(input, pad = (0, 0, 0, 0, p1, p2), value = fill)
             if w > width:
-                c1 = (w - width) // 2
-                c2 = (w - width) - c1
-                input = input[:, :, :, w // 2 - c1:w // 2 + c2, :]
-            else:
+                c = width // 2
+                input = input[:, :, :, w // 2 - c:w // 2 + c, :]
+            elif w < width:
                 p2 = (width - w) // 2
                 p1 = (width - w) - p2
                 input = F.pad(input, pad = (0, 0, p1, p2, 0, 0), value = fill)
@@ -261,10 +259,10 @@ class Preconditioner():
         
         # limit change ratio
         if limit > 0:
-            cu = output > input_0 * (1 + limit)
-            cd = output < input_0 * (1 - limit)
-            output[cu] = input_0[cu] * (1 + limit)
-            output[cd] = input_0[cd] * (1 - limit)
+            cu = output > input * (1 + limit)
+            cd = output < input * (1 - limit)
+            output[cu] = input[cu] * (1 + limit)
+            output[cd] = input[cd] * (1 - limit)
         
         # return denoised input if toggle is True
         if toggle:
