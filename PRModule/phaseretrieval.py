@@ -512,7 +512,7 @@ class PhaseRetrieval(nn.Module):
         device = initial_phase.device
         if self.shrinkwrap and self.initial_support.size(0) == 1:
             # allocate support for each data
-            self.support = torch.repeat_interleave(self.initial_support, repeats = initial_phase.size(0), dim = 0)
+            self.support = torch.repeat_interleave(self.initial_support, repeats = size_batch, dim = 0)
             self.block.updateSupport(self.support)
         # phase retrieval iteration
         var = {}
