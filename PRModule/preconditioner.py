@@ -279,15 +279,14 @@ class Preconditioner():
         
         # calculate preconditioning kernel
         input[input == 0] = 1
-        kernel = output / input - 1
-        kernel = 1 - kernel
-        kernel = self.fitSize(kernel, fill = 1 + limit, height = h, width = w)
+        kernel = output / input
+        kernel = self.fitSize(kernel, fill = 1 - limit, height = h, width = w)
         mask_sp_0 = torch.gt(input_0, bl) * torch.lt(input_0, bu)
         kernel[mask_sp_0 == 0] = 1
         kernel = ifftshift(kernel)
 
         # return non-deep preconditioning kernel
         if not deep:
-            kernel[mask_sp_0 == 1] = 1 + limit
+            kernel[mask_sp_0 == 1] = 1 - limit
 
         return kernel
