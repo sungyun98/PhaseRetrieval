@@ -18,7 +18,7 @@ from .partialconv2d import *
 
 class DenoisingNetwork(nn.Module):
     '''
-    denoising network for generating preconditioning kernel
+    denoising network for generating preconditioner
     
     partial convolutional U-net from https://arxiv.org/abs/1804.07723v2
     pointwise flip-mixing layer is added for reflecting centrosymmetry
@@ -161,7 +161,7 @@ class DenoisingNetwork(nn.Module):
 
 class Preconditioner():
     '''
-    preconditioning kernel for dpGPS
+    preconditioner for dpGPS
     
     calculate inverted change ratio by denoising neural network in single photon region limited by [1-limit, 1+limit]
     single photon region is defined as FWHM of single photon count assuming normal distribution of sigma 0.5
@@ -218,12 +218,13 @@ class Preconditioner():
         
     def getKernel(self, input, mask, limit = 0.25, deep = True, toggle = False):
         '''
-        generate preconditioning kernel
+        generate preconditioner
         
+        preconditioner is defined as change ratio of denoised data by neural network
         limit is change ratio limit for denoised data
         if limit is not positive, change ratio is not limited
-        deep is switch for deep learning based kernel
-        toggle is for returning denoised data, not preconditioning kernel
+        deep is switch for deep learning based preconditioner
+        toggle is for returning denoised data, not preconditioner
         
         args:
             input = torch float tensor of size 1 * 1 * H * W * 1

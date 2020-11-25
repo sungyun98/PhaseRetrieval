@@ -304,23 +304,13 @@ class PhaseRetrievalUnit(nn.Module):
             y = kwargs.pop('y')
             sigma = kwargs.pop('sigma')
             alpha = kwargs.pop('alpha')
-            inner_iter = kwargs.pop('inner_iter')
-            r = (2 * self.kernel.min().pow(2) / self.kernel.max()).item()
+            gamma = (2 * self.kernel.min().pow(2) / self.kernel.max()).item()
             type = 'R' if self.type == 'dpGPS-R' else 'F'
             # dpGPS
             zn = z - torch.fft(y, signal_ndim = 2) / self.kernel
             zn = self.proxT(zn, 1 / self.kernel, sigma)
-            # inexact iteration (FISTA)
-            x = y
-            t = 1
-            yb = y + torch.ifft((2 * zn - z) * self.kernel, signal_ndim = 2)
-            for i in range(inner_iter):
-                x = x - r * torch.ifft(torch.fft(x - yb, signal_ndim = 2) / self.kernel, signal_ndim = 2)
-                tn = (1 + math.sqrt(1 + 4 * t ** 2)) / 2
-                yn = self.proxS(x, r, alpha, type)
-                x = yn + (yn - y) * (t - 1) / tn
-                t = tn
-                y = yn
+            y = y + gamma * torch.ifft(2 * zn - z, signal_ndim = 2)
+            y = self.proxS(y, gamma, alpha, type)
                 
             return zn, y
             
@@ -345,7 +335,7 @@ class PhaseRetrieval(nn.Module):
         reference = https://doi.org/10.1364/OE.27.002792
 
         3. deep preconditioned GPS [dpGPS-R, dpGPS-F]
-        GPS with preconditioning based on deep learning
+        inexact preconditioned GPS with preconditioner based on deep learning
         fast iterative shrinkage-thresholding algorithm (FISTA) is used in inner inexact iteration
         reference = not published yet
 
@@ -384,7 +374,7 @@ class PhaseRetrieval(nn.Module):
         self.register_buffer('support', support)
         self.algorithm = algorithm
         self.error = error
-        # get preconditioning kernel for dpGPS
+        # get preconditioner for dpGPS
         option = {}
         if algorithm in ['dpGPS-R', 'dpGPS-F']:
             denoiser = Preconditioner()
@@ -501,7 +491,6 @@ class PhaseRetrieval(nn.Module):
             alpha_count = int (for GPS, dpGPS)
             t = float or tuple or list (for GPS)
             s = float or tuple or list (for GPS)
-            inner_iter = int (for dpGPS)
 
         returns:
             output = torch float tensor of size N * 1 * H * W * (1 or 2)
@@ -597,7 +586,6 @@ class PhaseRetrieval(nn.Module):
                     y_best = torch.zeros_like(initial_phase)
                     sigma_step, sigma_list = self.getParameter(kwargs.pop('sigma'), iteration, name = 'sigma')
                     alpha_step, alpha_list = self.getParameter(freqfilter(min(self.h, self.w), kwargs.pop('alpha_count')), iteration, name = 'alpha')
-                    var['inner_iter'] = kwargs.pop('inner_iter')
                 # update parameter
                 refresh = False
                 if n in sigma_step:
