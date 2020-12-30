@@ -306,9 +306,13 @@ class PhaseRetrievalUnit(nn.Module):
             alpha = kwargs.pop('alpha')
             gamma = (2 * self.kernel.min().pow(2) / self.kernel.max()).item()
             type = 'R' if self.type == 'dpGPS-R' else 'F'
-            # dpGPS
-            zn = z - torch.fft(y, signal_ndim = 2) / self.kernel
-            zn = self.proxT(zn, 1 / self.kernel, sigma)
+            # dpGPS with sigma condition
+            if sigma < 1:
+                zn = z - torch.fft(y, signal_ndim = 2) / self.kernel
+                zn = self.proxT(zn, 1 / self.kernel, sigma)
+            else:
+                zn = z - torch.fft(y, signal_ndim = 2)
+                zn = self.proxT(zn, 1, sigma)
             y = y + gamma * torch.ifft(2 * zn - z, signal_ndim = 2)
             y = self.proxS(y, gamma, alpha, type)
                 
@@ -458,15 +462,20 @@ class PhaseRetrieval(nn.Module):
             output = torch float tensor of size N
         '''
 
+        a0 = self.magnitude
         a = a * (1 - self.unknown)
         if self.error == 'R':
             # R-factor
-            R = torch.abs(a - self.magnitude).sum(dim = (1, 2, 3, 4)) / self.magnitude.sum()
+            R = torch.abs(a - a0).sum(dim = (1, 2, 3, 4)) / a0.sum()
             return R
         elif self.error == 'NLL':
             # negative Poisson log-likelihood
-            NLL = F.poisson_nll_loss(a.pow(2), self.magnitude.pow(2), log_input = False, full = True, reduction = 'none')
-            return NLL.mean(dim = (1, 2, 3, 4))
+            i0 = a0.pow(2)
+            i = a.pow(2)
+            valid = (1 - self.unknown) * (i0 > 1)
+            NLL = F.poisson_nll_loss(i, i0, log_input = False, full = True, reduction = 'none')
+            NLL = NLL * valid
+            return NLL.sum(dim = (1, 2, 3, 4)) / valid.sum()
         else:
             raise ValueError('{} is not supported for error metric.'.format(self.error))
     
