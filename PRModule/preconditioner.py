@@ -241,6 +241,7 @@ class Preconditioner():
         input = fftshift(input)
         mask = fftshift(mask)
         input_0 = input.clone().detach()
+        mask_0 = mask.clone().detach()
         
         # fit size of input and mask
         h = input.size(2)
@@ -272,22 +273,28 @@ class Preconditioner():
             return output
 
         # extract single photon region
-        hw = 2.35482 * 0.5 / 2 # define half-width for single photon region
+        hw = 0.5 # define half-width for single photon region
         bl = math.sqrt(1 - hw)
         bu = math.sqrt(1 + hw)
-        mask_sp = torch.gt(input, bl) * torch.lt(input, bu)
+        mask_sp = torch.gt(input, bl) # * torch.lt(input, bu)
         output = output * mask_sp
         
         # calculate preconditioning kernel
         input[input == 0] = 1
         kernel = output / input
         kernel = self.fitSize(kernel, fill = 1 - limit, height = h, width = w)
-        mask_sp_0 = torch.gt(input_0, bl) * torch.lt(input_0, bu)
-        kernel[mask_sp_0 == 0] = 1
-        kernel = ifftshift(kernel)
+        mask_sp_0 = torch.gt(input_0, bl) # * torch.lt(input_0, bu)
+        mask_low = torch.le(input_0, bl)
+        # kernel[mask_sp_0 == 0] = 1 + limit
+        kernel[mask_low == 1] = 1 - limit
+        kernel[mask_0 == 1] = 1
 
         # return non-deep preconditioning kernel
         if not deep:
-            kernel[mask_sp_0 == 1] = 1 - limit
+            kernel[mask_sp_0 == 1] = 1 + limit
 
+        # remove zero value
+        kernel[kernel == 0] = 1 - limit
+
+        kernel = ifftshift(kernel)
         return kernel
