@@ -50,7 +50,10 @@ def SubpixelAlignment(input, error = None, subpixel = 1):
             input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr_T), s_T)).real
         else:
             input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr), s)).real
-            
+    
+    # remove negative values due to alignment
+    input[input < 0] = 0
+
     if error is not None:
         return input, error
     else:
