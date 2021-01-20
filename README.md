@@ -13,12 +13,16 @@ note that references of each functions are written in docstring
 
 2. Supported Algorithms
     - Hybrid input-output (HIO) with boundary push
+    - Relaxed averaged alternating reflections (RAAR) with boundary push
     - Generalized proximal smoothing (GPS)
+    - Deep preconditioned relaxed averaged alternating reflections (dpRAAR)
     - Deep preconditioned generalized proximal smoothing (dpGPS)
 
 3. Additional Functions
     - Subpixel alignment by phase cross-correlation
     - Pairwise distance
+    - R-Factor (in main.ipynb)
+    - Negative Poisson Log-Likelihood function (Poisson NNL, in main.ipynb)
     - Phase retrieval transfer function (PRTF)
     - Power spectral density (PSD)
     - Eigenmode and low-rank approximation by singular value decomposition (SVD)
