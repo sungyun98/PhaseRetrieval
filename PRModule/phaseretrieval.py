@@ -1,5 +1,5 @@
 ###############################################################################
-# Phase Retrieval Algorithms : HIO, GPS and dpGPS
+# Phase Retrieval Algorithms : HIO, RAAR, GPS, dpRAAR, dpGPS
 #
 # Author: SUNG YUN LEE
 #   
@@ -140,11 +140,13 @@ class PhaseRetrievalUnit(nn.Module):
         self.register_buffer('unknown', unknown)
         self.register_buffer('support', support)
         self.type = type
+        # allocate Gaussian filter for GPS algorithms
         if type in ['GPS-R', 'GPS-F', 'dpGPS-R', 'dpGPS-F']:
             self.filter = GaussianFilter(self.magnitude.size(2), self.magnitude.size(3))
-            if type in ['dpGPS-R', 'dpGPS-F']:
-                kernel = kwargs.pop('preconditioner')
-                self.register_buffer('kernel', kernel)
+        # allocate preconditioner for deep preconditioned algorithms
+        if type in ['dpRAAR', 'dpGPS-R', 'dpGPS-F']:
+            kernel = kwargs.pop('preconditioner')
+            self.register_buffer('kernel', kernel)
 
     def updateSupport(self, support):
         '''
@@ -193,6 +195,51 @@ class PhaseRetrievalUnit(nn.Module):
         '''
 
         return z * self.unknown + self.magnitude * phase(z) * (1 - self.unknown)
+
+    def projM(self, u):
+        '''
+        projection operator on magnitude constraint in r-space
+
+        constraint is on amplitude of complex tensor
+
+        args:
+            u = torch float tensor of size N * 1 * H * W * 2
+
+        returns:
+            outputs = torch float tensor of size N * 1 * H * W * 2
+        '''
+        
+        return torch.ifft(self.projT(torch.fft(u, signal_ndim = 2)), signal_ndim = 2)
+
+    def reflS(self, u):
+        '''
+        reflection operator on support constraint
+
+        constraint is non-negative real
+
+        args:
+            u = torch float tensor of size N * 1 * H * W * 2
+
+        returns:
+            outputs = torch float tensor of size N * 1 * H * W * 2
+        '''
+        
+        return 2 * self.projS(u, conj = False) - u
+    
+    def reflM(self, u, approx = True):
+        '''
+        reflection operator on magnitude constraint in r-space
+
+        constraint is on amplitude of complex tensor
+
+        args:
+            u = torch float tensor of size N * 1 * H * W * 2
+
+        returns:
+            outputs = torch float tensor of size N * 1 * H * W * 2
+        '''
+        
+        return 2 * self.projM(u) - u
 
     def proxS(self, y, param, alpha, type, conj = True):
         '''
@@ -247,12 +294,12 @@ class PhaseRetrievalUnit(nn.Module):
         '''
         iteration of phase retrieval algorithms
 
-        for HIO, if toggle is True, boundary push is performed
+        for [HIO, RAAR, dpRAAR], if toggle is True, boundary push is performed
         
         kwargs:
-            u = torch float tensor of size N * 1 * H * W * 2 (for HIO)
-            beta = float (for HIO)
-            toggle = bool (for HIO)
+            u = torch float tensor of size N * 1 * H * W * 2 (for HIO, RAAR, dpRAAR)
+            beta = float (for HIO, RAAR, dpRAAR)
+            toggle = bool (for HIO, RAAR, dpRAAR)
             z = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
             y = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
             sigma = float (for GPS, dpGPS)
@@ -262,7 +309,7 @@ class PhaseRetrievalUnit(nn.Module):
             inner_iteration = int (for dpGPS)
         
         returns:
-            u = torch float tensor of size N * 1 * H * W * 2 (for HIO)
+            u = torch float tensor of size N * 1 * H * W * 2 (for HIO, RAAR, dpRAAR)
             z = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
             y = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
         '''
@@ -271,7 +318,7 @@ class PhaseRetrievalUnit(nn.Module):
             beta = kwargs.pop('beta')
             toggle = kwargs.pop('toggle')
 
-            un = torch.ifft(self.projT(torch.fft(u, signal_ndim = 2)), signal_ndim = 2)
+            un = self.projM(u)
             # get intersection of support constraint and positivity
             const = self.support * torch.ge(un, 0)[:, :, :, :, :1]
             if not toggle:
@@ -281,6 +328,27 @@ class PhaseRetrievalUnit(nn.Module):
                 # boundary push
                 un = un * const + beta * un * (1 - const)
             
+            return un
+
+        elif self.type in ['RAAR', 'dpRAAR']:
+            u = kwargs.pop('u')
+            beta = kwargs.pop('beta')
+            toggle = kwargs.pop('toggle')
+            
+            if not toggle:
+                if self.type == 'RAAR':
+                    # RAAR
+                    un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * self.projM(u)
+                elif self.type == 'dpRAAR':
+                    # dpRAAR
+                    z = self.kernel * self.projT(torch.fft(u, signal_ndim = 2))
+                    un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * torch.ifft(z, signal_ndim = 2)
+            else:
+                un = self.projM(u)
+                # get intersection of support constraint and positivity
+                const = self.support * torch.ge(un, 0)[:, :, :, :, :1]
+                # boundary push
+                un = un * const + beta * un * (1 - const)
             return un
 
         elif self.type in ['GPS-R', 'GPS-F']:
@@ -332,16 +400,23 @@ class PhaseRetrieval(nn.Module):
     support algorithm:
         1. hybrid input-output [HIO]
         HIO with additional boundary push stage originated from guided HIO without guiding
-        reference = https://doi.org/10.1103/PhysRevB.76.064113
+        reference1 (HIO) = https://doi.org/10.1364/AO.21.002758
+        reference2 (GHIO) = https://doi.org/10.1103/PhysRevB.76.064113
 
-        2. generalized proximal smoothing [GPS-R, GPS-F]
+        2. relaxed averaged alternating reflections [RAAR]
+        RAAR with additional boundary push stage refered above
+        reference = https://doi.org/10.1088/0266-5611/21/1/004
+
+        2-1. deep preconditioned RAAR [dpRAAR]
+        RAAR with preconditioner multiplied on projection operator, which is relaxed-averaged with Douglas-Rachford projection
+
+        3. generalized proximal smoothing [GPS-R, GPS-F]
         primal-dual hybrid gradient (PDHG) method with applying Moreau-Yosida regularization on constraints
         reference = https://doi.org/10.1364/OE.27.002792
 
-        3. deep preconditioned GPS [dpGPS-R, dpGPS-F]
+        3-1. deep preconditioned GPS [dpGPS-R, dpGPS-F]
         inexact preconditioned GPS with preconditioner based on deep learning
-        fast iterative shrinkage-thresholding algorithm (FISTA) is used in inner inexact iteration
-        reference = not published yet
+        single-step proximal gradient descent method is applied for inner inexact iteration
 
     support error metric:
         R-factor [R] and negative Poisson log-likelihood [NLL]
@@ -380,7 +455,7 @@ class PhaseRetrieval(nn.Module):
         self.error = error
         # get preconditioner for dpGPS
         option = {}
-        if algorithm in ['dpGPS-R', 'dpGPS-F']:
+        if algorithm in ['dpRAAR', 'dpGPS-R', 'dpGPS-F']:
             denoiser = Preconditioner()
             limit = kwargs.pop('limit')
             deep = kwargs.pop('deep')
@@ -494,7 +569,7 @@ class PhaseRetrieval(nn.Module):
             toggle = bool
 
         kwargs:
-            beta = float or tuple or list (for HIO)
+            beta = float or tuple or list (for HIO, RAAR, dpRAAR)
             boundary_push = float (for HIO)
             sigma = float or tuple or list (for GPS, dpGPS)
             alpha_count = int (for GPS, dpGPS)
@@ -519,7 +594,7 @@ class PhaseRetrieval(nn.Module):
         path = torch.zeros(size_batch, iteration, device = device)
         for n in range(iteration):
             # phase retrieval
-            if self.algorithm in ['HIO']:
+            if self.algorithm in ['HIO', 'RAAR', 'dpRAAR']:
                 # initialize
                 if n == 0:
                     u_best = torch.ifft(self.magnitude * initial_phase, signal_ndim = 2)
@@ -535,6 +610,8 @@ class PhaseRetrieval(nn.Module):
                 else:
                     var['toggle'] = True
                     var['beta'] = 1 - (n - bp_step) / (iteration - bp_step)
+                    if n == bp_step:
+                        refresh = True
                 # refresh when parameter updated
                 if refresh:
                     var['u'] = u_best.clone().detach()
@@ -549,15 +626,19 @@ class PhaseRetrieval(nn.Module):
                 error_min[trigger] = error[trigger]
                 u_best[trigger, :, :, :, :] = var['u'][trigger, :, :, :, :]
 
-            elif self.algorithm in ['GPS-R', 'GPS-F']:
+            elif self.algorithm in ['GPS-R', 'GPS-F', 'dpGPS-R', 'dpGPS-F']:
                 # initialize
                 if n == 0:
                     z_best = self.magnitude * initial_phase
                     y_best = torch.zeros_like(initial_phase)
                     sigma_step, sigma_list = self.getParameter(kwargs.pop('sigma'), iteration, name = 'sigma')
                     alpha_step, alpha_list = self.getParameter(freqfilter(min(self.h, self.w), kwargs.pop('alpha_count')), iteration, name = 'alpha')
-                    t_step, t_list = self.getParameter(kwargs.pop('t'), iteration, name = 't')
-                    s_step, s_list = self.getParameter(kwargs.pop('s'), iteration, name = 's')
+                    dp = False
+                    if self.algorithm in ['dpGPS-R', 'dpGPS-F']:
+                        dp = True
+                    else:
+                        t_step, t_list = self.getParameter(kwargs.pop('t'), iteration, name = 't')
+                        s_step, s_list = self.getParameter(kwargs.pop('s'), iteration, name = 's')
                 # update parameter
                 refresh = False
                 if n in sigma_step:
@@ -566,43 +647,13 @@ class PhaseRetrieval(nn.Module):
                 if n in alpha_step:
                     var['alpha'] = alpha_list[alpha_step.index(n)]
                     refresh = True
-                if n in t_step:
-                    var['t'] = t_list[t_step.index(n)]
-                    refresh = True
-                if n in s_step:
-                    var['s'] = s_list[s_step.index(n)]
-                    refresh = True
-                # refresh when parameter updated
-                if refresh:
-                    var['z'] = z_best.clone().detach()
-                    var['y'] = y_best.clone().detach()
-                    refresh = False
-                # perform single phase retrieval step
-                var['z'], var['y'] = self.block(**var)
-                # calculate error
-                error = self.getError(self.getAmplitude(z = var['z']))
-                path[:, n] = error
-                # update best
-                trigger = torch.le(error, error_min if n > 0 else error)
-                error_min[trigger] = error[trigger]
-                z_best[trigger, :, :, :, :] = var['z'][trigger, :, :, :, :]
-                y_best[trigger, :, :, :, :] = var['y'][trigger, :, :, :, :]
-
-            elif self.algorithm in ['dpGPS-R', 'dpGPS-F']:
-                # initialize
-                if n == 0:
-                    z_best = self.magnitude * initial_phase
-                    y_best = torch.zeros_like(initial_phase)
-                    sigma_step, sigma_list = self.getParameter(kwargs.pop('sigma'), iteration, name = 'sigma')
-                    alpha_step, alpha_list = self.getParameter(freqfilter(min(self.h, self.w), kwargs.pop('alpha_count')), iteration, name = 'alpha')
-                # update parameter
-                refresh = False
-                if n in sigma_step:
-                    var['sigma'] = sigma_list[sigma_step.index(n)]
-                    refresh = True
-                if n in alpha_step:
-                    var['alpha'] = alpha_list[alpha_step.index(n)]
-                    refresh = True
+                if not dp:
+                    if n in t_step:
+                        var['t'] = t_list[t_step.index(n)]
+                        refresh = True
+                    if n in s_step:
+                        var['s'] = s_list[s_step.index(n)]
+                        refresh = True
                 # refresh when parameter updated
                 if refresh:
                     var['z'] = z_best.clone().detach()
