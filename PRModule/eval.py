@@ -15,7 +15,7 @@ from numpy.linalg import svd
 from scipy.ndimage import fourier_shift
 from skimage.registration import phase_cross_correlation
 
-def SubpixelAlignment(input, error = None, subpixel = 1):
+def SubpixelAlignment(input, error = None, ref = None, subpixel = 1):
     '''
     subpixel alignment using phase cross-correlation
     reference = https://doi.org/10.1364/OL.33.000156
@@ -40,20 +40,33 @@ def SubpixelAlignment(input, error = None, subpixel = 1):
         input = input[order, :, :]
     
     # align array
-    n_max = input.shape[0]
-    for n in tqdm(range(1, n_max), desc = 'subpixel alignment'):
-        arr = input[n]
-        arr_T = np.flip(arr)
-        s, err, _ = phase_cross_correlation(input[0], arr, upsample_factor = subpixel)
-        s_T, err_T, _ = phase_cross_correlation(input[0], arr_T, upsample_factor = subpixel)
-        if err_T < err:
-            input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr_T), s_T)).real
-        else:
-            input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr), s)).real
-    
+    if ref is None:
+        n_max = input.shape[0]
+        for n in tqdm(range(1, n_max), desc = 'subpixel alignment'):
+            arr = input[n]
+            arr_T = np.flip(arr)
+            s, err, _ = phase_cross_correlation(input[0], arr, upsample_factor = subpixel)
+            s_T, err_T, _ = phase_cross_correlation(input[0], arr_T, upsample_factor = subpixel)
+            if err_T < err:
+                input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr_T), s_T)).real
+            else:
+                input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr), s)).real
+                
+    else:
+        n_max = input.shape[0]
+        for n in tqdm(range(0, n_max), desc = 'subpixel alignment'):
+            arr = input[n]
+            arr_T = np.flip(arr)
+            s, err, _ = phase_cross_correlation(ref, arr, upsample_factor = subpixel)
+            s_T, err_T, _ = phase_cross_correlation(ref, arr_T, upsample_factor = subpixel)
+            if err_T < err:
+                input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr_T), s_T)).real
+            else:
+                input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr), s)).real
+                
     # remove negative values due to alignment
     input[input < 0] = 0
-
+            
     if error is not None:
         return input, error
     else:

@@ -18,7 +18,7 @@ from .partialconv2d import *
 
 class DenoisingNetwork(nn.Module):
     '''
-    denoising network for generating preconditioner
+    denoising network for generating preconditioning kernel
     
     partial convolutional U-net from https://arxiv.org/abs/1804.07723v2
     pointwise flip-mixing layer is added for reflecting centrosymmetry
@@ -161,7 +161,7 @@ class DenoisingNetwork(nn.Module):
 
 class Preconditioner():
     '''
-    preconditioner for dpGPS
+    preconditioning kernel for dpGPS
     
     calculate inverted change ratio by denoising neural network in single photon region limited by [1-limit, 1+limit]
     single photon region is defined as FWHM of single photon count assuming normal distribution of sigma 0.5
@@ -218,13 +218,12 @@ class Preconditioner():
         
     def getKernel(self, input, mask, limit = 0.25, deep = True, toggle = False):
         '''
-        generate preconditioner
+        generate preconditioning kernel
         
-        preconditioner is defined as change ratio of denoised data by neural network
         limit is change ratio limit for denoised data
         if limit is not positive, change ratio is not limited
-        deep is switch for deep learning based preconditioner
-        toggle is for returning denoised data, not preconditioner
+        deep is switch for deep learning based kernel
+        toggle is for returning denoised data, not preconditioning kernel
         
         args:
             input = torch float tensor of size 1 * 1 * H * W * 1
@@ -282,19 +281,20 @@ class Preconditioner():
         # calculate preconditioning kernel
         input[input == 0] = 1
         kernel = output / input
-        kernel = self.fitSize(kernel, fill = 1 - limit, height = h, width = w)
+        kernel = self.fitSize(kernel, fill = 1, height = h, width = w)
         mask_sp_0 = torch.gt(input_0, bl) # * torch.lt(input_0, bu)
         mask_low = torch.le(input_0, bl)
-        # kernel[mask_sp_0 == 0] = 1 + limit
+#         kernel[mask_sp_0 == 0] = 1 + limit
         kernel[mask_low == 1] = 1 - limit
         kernel[mask_0 == 1] = 1
 
         # return non-deep preconditioning kernel
         if not deep:
             kernel[mask_sp_0 == 1] = 1 + limit
-
-        # remove zero value
+            
+        # remove zero value by 1 - limit
         kernel[kernel == 0] = 1 - limit
-
+        
         kernel = ifftshift(kernel)
+
         return kernel
