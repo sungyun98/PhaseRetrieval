@@ -607,6 +607,8 @@ class PhaseRetrieval(nn.Module):
                     if n in beta_step:
                         var['beta'] = beta_list[beta_step.index(n)]
                         refresh = True
+                    elif self.algorithm in ['RAAR', 'dpRAAR'] and not len(beta_step) > 1:
+                        var['beta'] = beta_list[0] + (1 - beta_list[0]) * (1 - math.exp(-(n / 14 * 100 / iteration) ** 3))
                 else:
                     var['toggle'] = True
                     var['beta'] = 1 - (n - bp_step) / (iteration - bp_step)
