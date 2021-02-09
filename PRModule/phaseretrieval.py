@@ -1,5 +1,5 @@
 ###############################################################################
-# Phase Retrieval Algorithms : HIO, RAAR, GPS, dpRAAR, dpGPS
+# Phase Retrieval Algorithms : HIO, RAAR, GPS, gRAAR, dRAAR, dpGPS
 #
 # Author: SUNG YUN LEE
 #   
@@ -109,7 +109,7 @@ class ShrinkWrap(GaussianFilter):
         '''
 
         n = u.size(0)
-        u = F.conv2d(u.squeeze(-1), weight = self.filter, padding = self.pad)
+        u = F.conv2d(u.squeeze(-1), weight = self.filter, padding = self.pad, padding_mode = 'reflect')
         u_max = u.view(n, -1).max(dim = -1).values.view(n, 1, 1, 1)
         return torch.gt(u, u_max * self.threshold).unsqueeze(-1).float()
 
@@ -140,11 +140,21 @@ class PhaseRetrievalUnit(nn.Module):
         self.register_buffer('unknown', unknown)
         self.register_buffer('support', support)
         self.type = type
+
+        # allocate denoised magnitude for projection operator on denoised pattern
+        if type in ['gRAAR']:
+            input_dn = GaussianSmoothing(fftshift(input).pow(2).squeeze(-1), sigma = 1.5, mask = 1 - fftshift(unknown).squeeze(-1)).sqrt()
+            input_dn = ifftshift(input_dn)
+            self.register_buffer('magnitude_dn', input_dn)
+        if type in ['dRAAR']:
+            kernel = kwargs.pop('preconditioner')
+            self.register_buffer('magnitude_dn', input * kernel)
+
         # allocate Gaussian filter for GPS algorithms
         if type in ['GPS-R', 'GPS-F', 'dpGPS-R', 'dpGPS-F']:
             self.filter = GaussianFilter(self.magnitude.size(2), self.magnitude.size(3))
         # allocate preconditioner for deep preconditioned algorithms
-        if type in ['dpRAAR', 'dpGPS-R', 'dpGPS-F']:
+        if type in ['dpGPS-R', 'dpGPS-F']:
             kernel = kwargs.pop('preconditioner')
             self.register_buffer('kernel', kernel)
 
@@ -181,7 +191,7 @@ class PhaseRetrievalUnit(nn.Module):
 
         return y
 
-    def projT(self, z):
+    def projT(self, z, denoised = False):
         '''
         projection operator on magnitude constraint
 
@@ -193,8 +203,11 @@ class PhaseRetrievalUnit(nn.Module):
         returns:
             outputs = torch float tensor of size N * 1 * H * W * 2
         '''
-
-        return z * self.unknown + self.magnitude * phase(z) * (1 - self.unknown)
+        
+        if denoised:
+            return z * self.unknown + self.magnitude_dn * phase(z) * (1 - self.unknown)
+        else:
+            return z * self.unknown + self.magnitude * phase(z) * (1 - self.unknown)
 
     def projM(self, u):
         '''
@@ -294,12 +307,12 @@ class PhaseRetrievalUnit(nn.Module):
         '''
         iteration of phase retrieval algorithms
 
-        for [HIO, RAAR, dpRAAR], if toggle is True, boundary push is performed
+        for [HIO, RAAR, gRAAR, dRAAR], if toggle is True, boundary push is performed
         
         kwargs:
-            u = torch float tensor of size N * 1 * H * W * 2 (for HIO, RAAR, dpRAAR)
-            beta = float (for HIO, RAAR, dpRAAR)
-            toggle = bool (for HIO, RAAR, dpRAAR)
+            u = torch float tensor of size N * 1 * H * W * 2 (for HIO, RAAR, gRAAR, dRAAR)
+            beta = float (for HIO, RAAR, gRAAR, dRAAR)
+            toggle = bool (for HIO, RAAR, gRAAR, dRAAR)
             z = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
             y = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
             sigma = float (for GPS, dpGPS)
@@ -309,7 +322,7 @@ class PhaseRetrievalUnit(nn.Module):
             inner_iteration = int (for dpGPS)
         
         returns:
-            u = torch float tensor of size N * 1 * H * W * 2 (for HIO, RAAR, dpRAAR)
+            u = torch float tensor of size N * 1 * H * W * 2 (for HIO, RAAR, gRAAR, dRAAR)
             z = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
             y = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
         '''
@@ -330,7 +343,7 @@ class PhaseRetrievalUnit(nn.Module):
             
             return un
 
-        elif self.type in ['RAAR', 'dpRAAR']:
+        elif self.type in ['RAAR', 'gRAAR', 'dRAAR']:
             u = kwargs.pop('u')
             beta = kwargs.pop('beta')
             toggle = kwargs.pop('toggle')
@@ -339,9 +352,9 @@ class PhaseRetrievalUnit(nn.Module):
                 if self.type == 'RAAR':
                     # RAAR
                     un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * self.projM(u)
-                elif self.type == 'dpRAAR':
-                    # dpRAAR
-                    z = self.kernel * self.projT(torch.fft(u, signal_ndim = 2))
+                elif self.type in ['gRAAR', 'dRAAR']:
+                    # gRAAR or dRAAR
+                    z = self.projT(torch.fft(u, signal_ndim = 2), True)
                     un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * torch.ifft(z, signal_ndim = 2)
             else:
                 un = self.projM(u)
@@ -407,8 +420,8 @@ class PhaseRetrieval(nn.Module):
         RAAR with additional boundary push stage refered above
         reference = https://doi.org/10.1088/0266-5611/21/1/004
 
-        2-1. deep preconditioned RAAR [dpRAAR]
-        RAAR with preconditioner multiplied on projection operator, which is relaxed-averaged with Douglas-Rachford projection
+        2-1. Gaussian RAAR / deep RAAR [gRAAR, dRAAR]
+        RAAR with projection operator on denoised data using Gaussian smoothing or deep learning
 
         3. generalized proximal smoothing [GPS-R, GPS-F]
         primal-dual hybrid gradient (PDHG) method with applying Moreau-Yosida regularization on constraints
@@ -453,9 +466,14 @@ class PhaseRetrieval(nn.Module):
         self.register_buffer('support', support)
         self.algorithm = algorithm
         self.error = error
-        # get preconditioner for dpGPS
         option = {}
-        if algorithm in ['dpRAAR', 'dpGPS-R', 'dpGPS-F']:
+        # get beta control option
+        if algorithm in ['HIO', 'RAAR', 'dpRAAR', 'gRAAR']:
+            self.beta_type = kwargs.pop('beta_type')
+            if self.beta_type != 'const':
+                self.beta_lim = kwargs.pop('beta_lim')
+        # get preconditioner for dpGPS
+        if algorithm in ['dRAAR', 'dpGPS-R', 'dpGPS-F']:
             denoiser = Preconditioner()
             limit = kwargs.pop('limit')
             deep = kwargs.pop('deep')
@@ -569,8 +587,8 @@ class PhaseRetrieval(nn.Module):
             toggle = bool
 
         kwargs:
-            beta = float or tuple or list (for HIO, RAAR, dpRAAR)
-            boundary_push = float (for HIO)
+            beta = float or tuple or list (for HIO, RAAR, gRAAR, dRAAR)
+            boundary_push = float (for HIO, RAAR, gRAAR, dRAAR)
             sigma = float or tuple or list (for GPS, dpGPS)
             alpha_count = int (for GPS, dpGPS)
             t = float or tuple or list (for GPS)
@@ -594,7 +612,7 @@ class PhaseRetrieval(nn.Module):
         path = torch.zeros(size_batch, iteration, device = device)
         for n in range(iteration):
             # phase retrieval
-            if self.algorithm in ['HIO', 'RAAR', 'dpRAAR']:
+            if self.algorithm in ['HIO', 'RAAR', 'gRAAR', 'dRAAR']:
                 # initialize
                 if n == 0:
                     u_best = torch.ifft(self.magnitude * initial_phase, signal_ndim = 2)
@@ -607,8 +625,14 @@ class PhaseRetrieval(nn.Module):
                     if n in beta_step:
                         var['beta'] = beta_list[beta_step.index(n)]
                         refresh = True
-                    elif self.algorithm in ['RAAR', 'dpRAAR'] and not len(beta_step) > 1:
-                        var['beta'] = beta_list[0] + (1 - beta_list[0]) * (1 - math.exp(-(n / 14 * 100 / iteration) ** 3))
+                    # beta control during iteration
+                    elif not len(beta_step) > 1 and self.beta_type != 'const':
+                        if self.beta_type == 'step':
+                            var['beta'] = beta_list[0] + (self.beta_lim - beta_list[0]) * (1 - math.exp(-(n / 7 * 100 / iteration) ** 3))
+                        elif self.beta_type == 'linear':
+                            var['beta'] = beta_list[0] + (self.beta_lim - beta_list[0]) / iteration * n
+                        else:
+                            raise ValueError('{} is not supported for beta control.'.format(self.beta_type))
                 else:
                     var['toggle'] = True
                     var['beta'] = 1 - (n - bp_step) / (iteration - bp_step)
