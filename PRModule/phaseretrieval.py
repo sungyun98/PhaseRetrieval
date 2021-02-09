@@ -240,7 +240,7 @@ class PhaseRetrievalUnit(nn.Module):
         
         return 2 * self.projS(u, conj = False) - u
     
-    def reflM(self, u, approx = True):
+    def reflM(self, u):
         '''
         reflection operator on magnitude constraint in r-space
 
@@ -469,7 +469,7 @@ class PhaseRetrieval(nn.Module):
         self.error = error
         option = {}
         # get beta control option
-        if algorithm in ['HIO', 'RAAR', 'dpRAAR', 'gRAAR']:
+        if algorithm in ['HIO', 'RAAR', 'dRAAR', 'gRAAR']:
             self.beta_type = kwargs.pop('beta_type')
             if self.beta_type != 'const':
                 self.beta_lim = kwargs.pop('beta_lim')
