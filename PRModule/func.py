@@ -7,6 +7,7 @@
 ###############################################################################
 
 __all__ = ['MakeSupport', 'fftshift', 'ifftshift', 'amplitude', 'phase', 'sqmesh', 'freqfilter', 'GaussianSmoothing']
+
 import math
 import numpy as np
 import torch
@@ -161,6 +162,7 @@ def GaussianSmoothing(input, sigma, mask = None):
     returns:
         output = torch float tensor of size N * 1 * H * W
     '''
+    
     ksize = 2 * math.ceil(2 * sigma) + 1
     psize = math.ceil(2 * sigma)
     
