@@ -15,6 +15,7 @@ import torch.nn.functional as F
 
 from .func import *
 from .preconditioner import *
+from .partialconv2d import *
 
 class GaussianFilter(nn.Module):
     """
