@@ -6,10 +6,11 @@
 # Contact: sungyun98@postech.ac.kr
 ###############################################################################
 
-__all__ = ['MakeSupport', 'fftshift', 'ifftshift', 'amplitude', 'phase', 'sqmesh', 'freqfilter']
-
+__all__ = ['MakeSupport', 'fftshift', 'ifftshift', 'amplitude', 'phase', 'sqmesh', 'freqfilter', 'GaussianSmoothing']
+import math
 import numpy as np
 import torch
+from .partialconv2d import *
 
 def MakeSupport(input, **kwargs):
     '''
@@ -146,3 +147,33 @@ def freqfilter(size, count):
         param += [n / count, alpha.item()]
 
     return tuple(param)
+
+def GaussianSmoothing(input, sigma, mask = None):
+    '''
+    Gaussian smoothing supporting mask
+    kernel size is same with MATLAB function imgaussfilt
+    
+    args:
+        input = torch float tensor of size N * 1 * H * W
+        sigma = float
+        mask = torch float tensor of size N * 1 * H * W
+
+    returns:
+        output = torch float tensor of size N * 1 * H * W
+    '''
+    ksize = 2 * math.ceil(2 * sigma) + 1
+    psize = math.ceil(2 * sigma)
+    
+    kernel = sqmesh(ksize, ksize)
+    kernel = torch.exp(-0.5 * kernel / sigma ** 2)
+    kernel = kernel / kernel.sum()
+    kernel = kernel.squeeze(-1)
+    
+    gfilter = PartialConv2d(1, 1, ksize, padding = psize, padding_mode = 'reflect', bias = False)
+    gfilter.weight.data = kernel
+    gfilter.weight.requires_grad = False
+    
+    output = gfilter(input, mask_in = mask)
+    if mask is not None:
+        output = output * mask
+    return output.unsqueeze(-1)
