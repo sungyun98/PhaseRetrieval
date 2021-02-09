@@ -14,8 +14,8 @@ note that references of each functions are written in docstring
 2. Supported Algorithms
     - Hybrid input-output (HIO) with boundary push
     - Relaxed averaged alternating reflections (RAAR) with boundary push
+    - RAAR with projection operator on denoised constraint by Gaussian smoothing or deep learning (gRAAR, dRAAR)
     - Generalized proximal smoothing (GPS)
-    - Deep preconditioned relaxed averaged alternating reflections (dpRAAR)
     - Deep preconditioned generalized proximal smoothing (dpGPS)
 
 3. Additional Functions
