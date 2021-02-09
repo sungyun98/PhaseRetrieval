@@ -93,7 +93,7 @@ class ShrinkWrap(GaussianFilter):
         if self.sigma > self.sigma_limit:
             if update_sigma:
                 self.sigma = self.sigma * (1 - self.ratio)
-            self.filter = torch.exp(-self.mesh / (2 * self.sigma ** 2))
+            self.filter = torch.exp(-0.5 * self.mesh / self.sigma ** 2)
             self.filter = self.filter / self.filter.sum()
         
     def forward(self, u):
