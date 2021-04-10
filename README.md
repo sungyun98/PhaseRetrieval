@@ -5,6 +5,7 @@ Phase retrieval module based on PyTorch 1.6.0
 Multi-GPU calculation supported by torch.nn.DataParallel wrapper
 
 note that references of each functions are written in docstring
+it is recommended to retrain PRModule.Preconditioner.DenoisingNetwork for your purpose
 
 1. Basic Notations
     - u: r-space complex matrix corresponding to object (i.e. electron density)
