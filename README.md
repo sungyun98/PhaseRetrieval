@@ -6,6 +6,8 @@ Multi-GPU calculation supported by torch.nn.DataParallel wrapper
 
 note that references of each functions are written in docstring
 
+partial convolution is directly imported from https://github.com/NVIDIA/partialconv
+
 it is recommended to retrain PRModule.Preconditioner.DenoisingNetwork for your purpose
 
 1. Basic Notations
