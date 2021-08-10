@@ -1,21 +1,21 @@
 # Phase Retrieval Module
 
-Phase retrieval module based on PyTorch 1.6.0
+Phase retrieval module based on PyTorch 1.6.0 with CUDA 10.2
 
 Multi-GPU calculation supported by torch.nn.DataParallel wrapper
 
-note that references of each functions are written in docstring
+note that references of each functions are written in docstrings
 
 partial convolution is directly imported from https://github.com/NVIDIA/partialconv
 
-it is recommended to retrain PRModule.Preconditioner.DenoisingNetwork for your purpose
+pretrained parameters for PRModule.preconditioner.DenoisingNetwork is required for neural-network-based operations.
 
 1. Basic Notations
     - u: r-space complex matrix corresponding to object (i.e. electron density)
     - z: k-space complex matrix corresponding to Fourier transform of oversampled object (i.e. diffraction pattern)
     - y: Lagrange multiplier complex matrix for dual formulation of optimization problem
 
-2. Supported Algorithms
+2. Supported Algorithms (with R-factor and Poisson NLL as error metrics)
     - Hybrid input-output (HIO) with boundary push
     - Relaxed averaged alternating reflections (RAAR) with boundary push
     - RAAR with projection operator on denoised constraint by Gaussian smoothing or deep learning (gRAAR, dRAAR)
@@ -25,8 +25,6 @@ it is recommended to retrain PRModule.Preconditioner.DenoisingNetwork for your p
 3. Additional Functions
     - Subpixel alignment by phase cross-correlation
     - Pairwise distance
-    - R-Factor (in main.ipynb)
-    - Negative Poisson Log-Likelihood function (Poisson NNL, in main.ipynb)
     - Phase retrieval transfer function (PRTF)
     - Power spectral density (PSD)
     - Eigenmode and low-rank approximation by singular value decomposition (SVD)
