@@ -1,5 +1,5 @@
 ###############################################################################
-# Denoising Network for dpGPS
+# Denoising Network for dRAAR and dpGPS
 #
 # Author: SUNG YUN LEE
 #   
