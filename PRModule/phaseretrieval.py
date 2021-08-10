@@ -431,6 +431,7 @@ class PhaseRetrieval(nn.Module):
         3-1. deep preconditioned GPS [dpGPS-R, dpGPS-F]
         inexact preconditioned GPS with preconditioner based on deep learning
         single-step proximal gradient descent method is applied for inner inexact iteration
+        reference (preconditioned PDHG) = https://doi.org/10.1007/s10915-020-01371-1
 
     support error metric:
         R-factor [R] and negative Poisson log-likelihood [NLL]

@@ -169,7 +169,7 @@ class Preconditioner():
     input should be k-space amplitude data, not intensity data
     input value should be scaled to photon count, not detector count
     '''
-    def __init__(self, cnum = 16, path = './PRModule/pretrained.pth'):
+    def __init__(self, cnum = 16, path = './PRModule/param_pretrained.pth'):
         '''
         load pretrained denoising network
         
@@ -239,8 +239,8 @@ class Preconditioner():
         input = input * (1 - mask)
         input = fftshift(input)
         mask = fftshift(mask)
-        input_0 = input.clone().detach()
-        mask_0 = mask.clone().detach()
+        input_raw = input.clone().detach()
+        mask_raw = mask.clone().detach()
         
         # fit size of input and mask
         h = input.size(2)
@@ -268,29 +268,25 @@ class Preconditioner():
         # return denoised input if toggle is True
         if toggle:
             output = self.fitSize(output, fill = -1, height = h, width = w)
-            output[output < 0] = input_0[output < 0]
+            output[output < 0] = input_raw[output < 0]
             return output
 
-        # extract single photon region
-        hw = 0.5 # define half-width for single photon region
-        bl = math.sqrt(1 - hw)
-        bu = math.sqrt(1 + hw)
-        mask_sp = torch.gt(input, bl) # * torch.lt(input, bu)
-        output = output * mask_sp
+        # remove effective zero-photon region
+        thr = 0.5 # define threshold for zero-photon region (in photon count)
+        bl = math.sqrt(1 - thr)
+        output = output * torch.gt(input, bl)
         
         # calculate preconditioning kernel
         input[input == 0] = 1
         kernel = output / input
         kernel = self.fitSize(kernel, fill = 1, height = h, width = w)
-        mask_sp_0 = torch.gt(input_0, bl) # * torch.lt(input_0, bu)
-        mask_low = torch.le(input_0, bl)
-#         kernel[mask_sp_0 == 0] = 1 + limit
-        kernel[mask_low == 1] = 1 - limit
-        kernel[mask_0 == 1] = 1
+        mask_zero = torch.le(input_raw, bl)
+        kernel[mask_zero == 1] = 1 - limit
+        kernel[mask_raw == 1] = 1
 
         # return non-deep preconditioning kernel
         if not deep:
-            kernel[mask_sp_0 == 1] = 1 + limit
+            kernel[input_raw > bl] = 1 + limit
             
         # remove zero value by 1 - limit
         kernel[kernel == 0] = 1 - limit
