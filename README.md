@@ -4,12 +4,10 @@ Phase retrieval module based on Python 3.7.4 and PyTorch 1.6.0 with CUDA 10.2
 
 Multi-GPU calculation supported by torch.nn.DataParallel wrapper
 
-note that references of each functions are written in docstrings
-
-partial convolution is directly imported from https://github.com/NVIDIA/partialconv
-
 pretrained parameters for PRModule.preconditioner.DenoisingNetwork is required for neural-network-based operations
 (it might show poor performance with a case different from the trained condition)
+
+## Notations and Functions
 
 1. Basic Notations
     - u: r-space complex matrix corresponding to object (i.e. electron density)
@@ -29,3 +27,10 @@ pretrained parameters for PRModule.preconditioner.DenoisingNetwork is required f
     - Phase retrieval transfer function (PRTF)
     - Power spectral density (PSD)
     - Eigenmode and low-rank approximation by singular value decomposition (SVD)
+
+## Citation
+<https://doi.org/10.1103/PhysRevResearch.3.043066>
+
+note that references of each functions are written in docstrings
+
+partial convolution is directly imported from <https://github.com/NVIDIA/partialconv>
