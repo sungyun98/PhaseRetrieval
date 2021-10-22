@@ -161,13 +161,14 @@ class DenoisingNetwork(nn.Module):
 
 class Preconditioner():
     '''
-    preconditioning kernel for dpGPS
+    preconditioning kernel for dRAAR and dpGPS
     
     calculate inverted change ratio by denoising neural network in single photon region limited by [1-limit, 1+limit]
     single photon region is defined as FWHM of single photon count assuming normal distribution of sigma 0.5
     if denoising network not cover all single photon region, uncalculated value is set to maximum value 1+limit
     input should be k-space amplitude data, not intensity data
     input value should be scaled to photon count, not detector count
+    reference = https://doi.org/10.1103/PhysRevResearch.3.043066
     '''
     def __init__(self, cnum = 16, path = './PRModule/param_pretrained.pth'):
         '''

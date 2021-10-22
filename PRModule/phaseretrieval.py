@@ -423,6 +423,7 @@ class PhaseRetrieval(nn.Module):
 
         2-1. Gaussian RAAR / deep RAAR [gRAAR, dRAAR]
         RAAR with projection operator on denoised data using Gaussian smoothing or deep learning
+        reference = https://doi.org/10.1103/PhysRevResearch.3.043066
 
         3. generalized proximal smoothing [GPS-R, GPS-F]
         primal-dual hybrid gradient (PDHG) method with applying Moreau-Yosida regularization on constraints
@@ -432,6 +433,7 @@ class PhaseRetrieval(nn.Module):
         inexact preconditioned GPS with preconditioner based on deep learning
         single-step proximal gradient descent method is applied for inner inexact iteration
         reference (preconditioned PDHG) = https://doi.org/10.1007/s10915-020-01371-1
+        reference (preconditioner) = https://doi.org/10.1103/PhysRevResearch.3.043066
 
     support error metric:
         R-factor [R] and negative Poisson log-likelihood [NLL]
