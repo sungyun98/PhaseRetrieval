@@ -152,8 +152,8 @@ def PRTF(input: np.ndarray, ref: np.ndarray, mask: np.ndarray | None = None) -> 
 def PSD(input: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
     """Compute the radial average (power spectral density, PSD) of k-space data.
 
-    The average over ring ``r`` covers the pixels at distance ``[r, r + 1)`` from the array
-    centre ``((H - 1) / 2, (W - 1) / 2)``.
+    Ring ``r`` contains the pixels at a distance in ``[r, r + 1)`` from the zero frequency at
+    index ``(H // 2, W // 2)``, the centre used by ``numpy.fft.fftshift``.
 
     Parameters
     ----------
@@ -167,28 +167,18 @@ def PSD(input: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
     numpy.ndarray
         Float64 array of shape ``(min(H, W) // 2,)``; NaN for rings without valid pixels.
     """
-    # get distance mesh
-    di = input.shape[0]
-    dj = input.shape[1]
-    li = np.linspace(-di / 2 + 0.5, di / 2 - 0.5, num=di)
-    lj = np.linspace(-dj / 2 + 0.5, dj / 2 - 0.5, num=dj)
-    mi, mj = np.meshgrid(li, lj, indexing="ij")
-    m = np.sqrt(np.power(mi, 2) + np.power(mj, 2))
+    h, w = input.shape
+    di, dj = np.meshgrid(np.arange(h) - h // 2, np.arange(w) - w // 2, indexing="ij")
+    ring = np.floor(np.sqrt(di**2 + dj**2)).astype(int)
+    n_ring = min(h, w) // 2
 
-    # calculate psd
-    r_max = min(di, dj) // 2
-    psd = np.zeros(r_max)
-    for r in tqdm(range(r_max), desc="psd"):
-        drop = (m >= r) * (m < r + 1)
-        if mask is not None:
-            drop = drop * (1 - mask)
-        drop = drop > 0
-        if np.sum(drop) > 0:
-            psd[r] = np.mean(input[drop])
-        else:
-            psd[r] = np.nan
-
-    return psd
+    valid = ring < n_ring
+    if mask is not None:
+        valid &= ~np.asarray(mask, dtype=bool)
+    total = np.bincount(ring[valid], weights=input[valid], minlength=n_ring)
+    count = np.bincount(ring[valid], minlength=n_ring)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return total / count
 
 
 def EigenMode(

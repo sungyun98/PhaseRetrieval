@@ -298,7 +298,12 @@ _SW_FIX = (
     "Gaussian kernel is centred instead of ifftshifted (the ifftshifted kernel split the Gaussian "
     "into lobes about +-ceil(2 * sigma_initial) px apart and enlarged the support)"
 )
+_PSD_CENTRE = (
+    "PSD measures radii from the zero frequency (H // 2, W // 2) instead of ((H - 1) / 2, "
+    "(W - 1) / 2), half a pixel off for even sizes (both PSD inputs here have even sizes)"
+)
 EXPECTED_CHANGES = {
     "pr_HIO_shrinkwrap": _SW_FIX,
     "pr_GPS-R_shrinkwrap": _SW_FIX,
+    "eval_metrics": (("psd_intensity_masked", "psd_random"), _PSD_CENTRE),
 }

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from phaseretrieval import PRTF, SubpixelAlignment
+from phaseretrieval import PRTF, PSD, SubpixelAlignment
 
 
 def _stack(seed=0, n=4, size=32):
@@ -38,3 +38,37 @@ def test_prtf_keeps_ref():
     before = ref.copy()
     PRTF(stack, ref)
     assert np.array_equal(ref, before)
+
+
+def _psd_v1(x, mask=None):
+    """PSD of v1.0-legacy/v2.0 up to this fix: radii from ((H - 1) / 2, (W - 1) / 2)."""
+    h, w = x.shape
+    mi, mj = np.meshgrid(
+        np.linspace(-h / 2 + 0.5, h / 2 - 0.5, h),
+        np.linspace(-w / 2 + 0.5, w / 2 - 0.5, w),
+        indexing="ij",
+    )
+    m = np.sqrt(mi**2 + mj**2)
+    out = np.full(min(h, w) // 2, np.nan)
+    for r in range(out.size):
+        ring = (m >= r) & (m < r + 1) & (True if mask is None else ~mask)
+        if ring.any():
+            out[r] = x[ring].mean()
+    return out
+
+
+def test_psd_odd_size_unchanged():
+    rs = np.random.RandomState(1)
+    x, mask = rs.rand(41, 37), rs.rand(41, 37) < 0.1
+    assert np.allclose(PSD(x, mask), _psd_v1(x, mask), rtol=1e-12, equal_nan=True)
+
+
+def test_psd_centred_on_zero_frequency():
+    # a radially symmetric function about the fftshift centre has a constant value per ring
+    h, w = 64, 48
+    di, dj = np.meshgrid(np.arange(h) - h // 2, np.arange(w) - w // 2, indexing="ij")
+    r = np.floor(np.hypot(di, dj))
+    psd = PSD(r)
+    assert psd.shape == (24,)
+    assert np.array_equal(psd, np.arange(24.0))
+    assert PSD(r, mask=r == 3)[3] != PSD(r, mask=r == 3)[3]  # NaN for an empty ring
