@@ -81,7 +81,7 @@ class ShrinkWrap(GaussianFilter):
     The object is smoothed with a normalized Gaussian kernel of size
     ``2 * ceil(2 * sigma_initial) + 1`` (as in the MATLAB function ``imgaussfilt``) and
     thresholded. After each `update`, ``sigma`` is multiplied by ``1 - ratio_update`` until it
-    reaches ``sigma_limit``.
+    reaches ``sigma_limit``; `reset` restores ``sigma_initial``.
 
     Parameters
     ----------
@@ -90,9 +90,15 @@ class ShrinkWrap(GaussianFilter):
     sigma_initial : float, default 3
         Initial standard deviation of the kernel in pixels.
     sigma_limit : float, default 1.5
-        The kernel is no longer updated once ``sigma`` is not above this value.
+        The kernel is no longer updated once ``sigma`` is not above this value. If it equals
+        ``sigma_initial``, the kernel is fixed.
     ratio_update : float, default 0.01
         Relative decrease of ``sigma`` per update.
+
+    Raises
+    ------
+    ValueError
+        If ``sigma_initial`` is smaller than ``sigma_limit``.
 
     References
     ----------
@@ -106,17 +112,31 @@ class ShrinkWrap(GaussianFilter):
         sigma_limit: float = 1.5,
         ratio_update: float = 0.01,
     ) -> None:
-        self.sigma = sigma_initial
+        if sigma_initial < sigma_limit:
+            raise ValueError(
+                f"sigma_initial ({sigma_initial}) must not be smaller than sigma_limit "
+                f"({sigma_limit})."
+            )
+        self.sigma_initial = sigma_initial
         self.sigma_limit = sigma_limit
         self.ratio = ratio_update
         self.threshold = threshold
 
-        # calculate initial filter
-        size = 2 * math.ceil(2 * self.sigma) + 1
-        self.pad = math.ceil(2 * self.sigma)
+        # the kernel size is set by the initial sigma, the largest one
+        size = 2 * math.ceil(2 * sigma_initial) + 1
+        self.pad = math.ceil(2 * sigma_initial)
         super().__init__(size, size)
         self.register_buffer("filter", self.mesh * 0)
-        self.update(False)
+        self.reset()
+
+    def reset(self) -> None:
+        """Restore ``sigma_initial`` and its kernel."""
+        self.sigma = self.sigma_initial
+        self._compute_filter()
+
+    def _compute_filter(self) -> None:
+        self.filter = torch.exp(-0.5 * self.mesh / self.sigma**2)
+        self.filter = self.filter / self.filter.sum()
 
     def update(self, update_sigma: bool = True) -> None:
         """Decrease ``sigma`` and recompute the kernel, while ``sigma > sigma_limit``.
@@ -126,12 +146,10 @@ class ShrinkWrap(GaussianFilter):
         update_sigma : bool, default True
             If False, recompute the kernel for the current ``sigma`` without decreasing it.
         """
-        # update filter
         if self.sigma > self.sigma_limit:
             if update_sigma:
                 self.sigma = self.sigma * (1 - self.ratio)
-            self.filter = torch.exp(-0.5 * self.mesh / self.sigma**2)
-            self.filter = self.filter / self.filter.sum()
+            self._compute_filter()
 
     def forward(self, u: Tensor) -> Tensor:
         """Compute a new support from the smoothed object.
@@ -526,7 +544,9 @@ class PhaseRetrieval(nn.Module):
     error : {'R', 'NLL'}
         Error metric.
     shrinkwrap : bool, default False
-        Update the support with `ShrinkWrap` every ``interval`` iterations.
+        Update the support with `ShrinkWrap` every ``interval`` iterations. Every call of
+        `forward` starts again from ``support`` and ``sigma_initial``, so that batches of
+        reconstructions are independent.
     **kwargs
         Keyword arguments listed below. Other keywords are ignored, so the same dictionary
         can be passed to the constructor and to `forward`.
@@ -751,10 +771,14 @@ class PhaseRetrieval(nn.Module):
         """
         size_batch = initial_phase.size(0)
         device = initial_phase.device
-        if self.shrinkwrap and self.initial_support.size(0) == 1:
-            # allocate support for each data
-            self.support = torch.repeat_interleave(self.initial_support, repeats=size_batch, dim=0)
-            self.block.updateSupport(self.support)
+        if self.shrinkwrap:
+            # start from the initial support (one per reconstruction) and ShrinkWrap state
+            support = self.initial_support
+            if support.size(0) == 1:
+                support = torch.repeat_interleave(support, repeats=size_batch, dim=0)
+            self.support = support
+            self.block.updateSupport(support)
+            self.shrink.reset()
         # phase retrieval iteration
         var = {}
         u_best = z_best = y_best = None
