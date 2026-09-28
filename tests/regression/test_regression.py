@@ -54,11 +54,16 @@ def float32_tolerance(name):
 
 def check_expected(name, failures, api, ref_meta):
     # EXPECTED_CHANGES apply to later implementations; the reference implementation must
-    # reproduce itself
+    # reproduce itself. An entry is either a reason (the whole case may differ) or a pair
+    # (keys, reason): only these result keys may differ, all others must still match.
     if name in cases.EXPECTED_CHANGES and ref_meta.get("adapter") != api.name:
-        reason = cases.EXPECTED_CHANGES[name]
-        if failures:
-            pytest.xfail("expected change ({}): {}".format(reason, "; ".join(failures)))
+        entry = cases.EXPECTED_CHANGES[name]
+        keys, reason = entry if isinstance(entry, tuple) else (None, entry)
+        expected = [f for f in failures if keys is None or f.split(":")[0] in keys]
+        unexpected = [f for f in failures if f not in expected]
+        assert not unexpected, "\n".join(unexpected)
+        if expected:
+            pytest.xfail("expected change ({}): {}".format(reason, "; ".join(expected)))
         pytest.fail(f"marked as expected change ({reason}) but matches the reference")
     assert not failures, "\n".join(failures)
 
