@@ -1,0 +1,19 @@
+# Environment used to generate references/ from the original code (tag v1.0-legacy).
+# Closest available match to the original Python 3.7 / PyTorch 1.6 setup, CPU-only
+# (the CUDA 10.2 build of PyTorch 1.6 does not support current GPUs).
+#   conda env create -f tests/regression/environment-legacy.yml
+name: pr-legacy
+channels:
+  - conda-forge
+dependencies:
+  - python=3.7.12
+  - numpy=1.19.5
+  - scipy=1.5.3
+  - scikit-image=0.18.1
+  - tqdm
+  - pytest
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch==1.6.0+cpu
+      - future
