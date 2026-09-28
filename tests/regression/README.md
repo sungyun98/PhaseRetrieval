@@ -23,7 +23,12 @@ which is checked through `u_outside_abs_sum`).
 ## Running
 
 ```bash
-# the original code (should reproduce the references bit for bit)
+# current code (adapters/pr_modern.py)
+REG_IMPL=pr_modern REG_CODE_ROOT=. conda run -n <env> python -m pytest tests/regression -q
+# float64 equivalence check against references_f64/
+REG_FLOAT64=1 REG_IMPL=pr_modern REG_CODE_ROOT=. conda run -n <env> python -m pytest tests/regression -q
+
+# the original code (reproduces the references bit for bit)
 git worktree add --detach ../_legacy/PhaseRetrieval v1.0-legacy
 REG_IMPL=pr_legacy REG_CODE_ROOT=../_legacy/PhaseRetrieval \
     conda run -n pr-legacy python -m pytest tests/regression -q
@@ -33,6 +38,16 @@ A result passes when its relative L2 difference `||new - ref|| / ||ref||` is wit
 case tolerance in `cases_pr.py` (1e-6 for direct operations, 1e-5 for the preconditioner
 network, 1e-4 for iterative algorithms). NaN positions and error types must match exactly.
 
+## Float32 noise and the float64 check
+
+Iterative phase retrieval amplifies float32 rounding: the legacy code's own float32 results
+differ from its float64 results by up to 4e-2 (gRAAR, 40 iterations), so two correct
+implementations can differ by that much in float32. `generate_f64_references.py` runs the
+legacy code in float64 (`references_f64/`, iterative cases and the preconditioner) and stores
+this noise per result; the float32 tolerance of a result is raised to three times it. The
+float64 run (`REG_FLOAT64=1`) must match `references_f64/` to 1e-9, which checks that the
+algorithms are the same independently of float32 rounding.
+
 ## Known behaviour of the original code recorded in the references
 
 - `pr_HIO_shrinkwrap`, `pr_GPS-R_shrinkwrap`: the original `ShrinkWrap.forward` raises
@@ -41,4 +56,5 @@ network, 1e-4 for iterative algorithms). NaN positions and error types must matc
   legacy adapter makes `torch.load` default to `map_location='cpu'` so it runs on CPU.
 
 Intended changes of results are listed with their reason in `EXPECTED_CHANGES`
-(`cases_pr.py`); such cases are reported as expected failures.
+(`cases_pr.py`); for implementations other than the one that produced the references, such
+cases are reported as expected failures.
