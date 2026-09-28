@@ -3,7 +3,7 @@
 #
 # Author: SUNG YUN LEE
 #
-# Contact: sungyun98@postech.ac.kr
+# Contact: sungyun98@g.postech.edu
 ###############################################################################
 
 __all__ = ['PhaseRetrieval']
