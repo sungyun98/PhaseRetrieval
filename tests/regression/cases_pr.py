@@ -306,4 +306,9 @@ EXPECTED_CHANGES = {
     "pr_HIO_shrinkwrap": _SW_FIX,
     "pr_GPS-R_shrinkwrap": _SW_FIX,
     "eval_metrics": (("psd_intensity_masked", "psd_random"), _PSD_CENTRE),
+    "eval_eigenmode": (
+        ("lowrank_approx",),
+        "EigenMode approximates the whole set (mean of the rank-l approximations of all images) "
+        "instead of the first image only",
+    ),
 }

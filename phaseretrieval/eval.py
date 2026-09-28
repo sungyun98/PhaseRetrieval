@@ -184,12 +184,18 @@ def PSD(input: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
 def EigenMode(
     input: np.ndarray, k: int | None = None, lowrank: bool = True
 ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute the eigenmodes of a set of images by singular value decomposition (SVD).
+    """Compute the eigenmodes of a set of images and their low-rank approximation.
+
+    The images are the columns of a ``(H * W, N)`` matrix whose singular value decomposition
+    gives the eigenmodes (left singular vectors). The rank-``l`` approximation of the set is
+    the mean over the images of their rank-``l`` approximations, which is the projection of
+    the mean image onto the first ``l`` eigenmodes: it keeps the structure common to the
+    reconstructions and drops the variations carried by the weaker modes.
 
     Parameters
     ----------
     input : numpy.ndarray
-        Real images of shape ``(N, H, W)``.
+        Real images of shape ``(N, H, W)``, e.g. aligned reconstructions.
     k : int, optional
         Number of modes to return. By default, all ``M = min(N, H * W)`` modes (and no
         low-rank approximation).
@@ -198,30 +204,26 @@ def EigenMode(
 
     Returns
     -------
-    output : numpy.ndarray
-        Eigenmodes (left singular vectors) of shape ``(M or k, H, W)``.
+    modes : numpy.ndarray
+        Eigenmodes of shape ``(M or k, H, W)``, each normalized to unit norm; their signs are
+        arbitrary.
     s : numpy.ndarray
         Singular values in decreasing order, shape ``(M or k,)``.
     approx : numpy.ndarray
-        Approximations of rank 1 to ``k`` of the first image ``input[0]``, shape
-        ``(k, H, W)``; returned only if ``k`` is given and ``lowrank`` is True.
+        Approximations of rank 1 to ``k``, shape ``(k, H, W)``; returned only if ``k`` is
+        given and ``lowrank`` is True.
     """
-    h = input.shape[1]
-    w = input.shape[2]
-    input = input.reshape((-1, h * w)).T
-    # calculate singular value decomposition
-    u, s, vh = svd(input, full_matrices=False)
-    output = u.T.reshape((-1, h, w))
+    h, w = input.shape[1:]
+    data = input.reshape(-1, h * w).T  # one image per column
+    u, s, vh = svd(data, full_matrices=False)
+    modes = u.T.reshape(-1, h, w)
     if k is None:
-        return output, s
-    else:
-        if not lowrank:
-            return output[:k], s[:k]
-        else:
-            # calculate low-rank approximation with order 1 to k
-            approx = np.zeros((k, h, w))
-            for rank in range(1, k + 1):
-                temp = u[:, :rank] @ np.diag(s[:rank]) @ vh[:rank, :]
-                temp = temp[:, 0].reshape((h, w))
-                approx[rank - 1, :, :] = temp
-            return output[:k], s[:k], approx
+        return modes, s
+    if not lowrank:
+        return modes[:k], s[:k]
+
+    # mean of the rank-l approximations U_l S_l V_l^T over the images (columns):
+    # sum over the first l modes of u_m * s_m * mean(vh[m, :])
+    weights = s[:k] * vh[:k].mean(axis=1)
+    approx = np.cumsum(u[:, :k] * weights, axis=1).T.reshape(k, h, w)
+    return modes[:k], s[:k], approx

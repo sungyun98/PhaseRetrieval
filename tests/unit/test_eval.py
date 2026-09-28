@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from phaseretrieval import PRTF, PSD, SubpixelAlignment
+from phaseretrieval import PRTF, PSD, EigenMode, SubpixelAlignment
 
 
 def _stack(seed=0, n=4, size=32):
@@ -72,3 +72,20 @@ def test_psd_centred_on_zero_frequency():
     assert psd.shape == (24,)
     assert np.array_equal(psd, np.arange(24.0))
     assert PSD(r, mask=r == 3)[3] != PSD(r, mask=r == 3)[3]  # NaN for an empty ring
+
+
+def test_eigenmode_lowrank_approximation_of_the_set():
+    rs = np.random.RandomState(2)
+    stack = _stack(n=6) + 0.05 * rs.randn(6, 32, 32)
+    modes, s, approx = EigenMode(stack, k=6)
+    assert approx.shape == (6, 32, 32)
+    data = stack.reshape(6, -1).T
+    u, sv, vh = np.linalg.svd(data, full_matrices=False)
+    for rank in (1, 3):
+        explicit = (u[:, :rank] @ np.diag(sv[:rank]) @ vh[:rank]).mean(axis=1).reshape(32, 32)
+        assert np.allclose(approx[rank - 1], explicit)
+    # the full-rank approximation is the mean image
+    assert np.allclose(approx[-1], stack.mean(axis=0))
+    # rank 1: projection of the mean onto the first mode
+    mean = stack.mean(axis=0)
+    assert np.allclose(approx[0], modes[0] * np.sum(modes[0] * mean))
