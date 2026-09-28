@@ -40,7 +40,7 @@ with `cpu` for a CPU-only installation.
 
 ## Usage
 
-`main.ipynb` walks through a complete reconstruction of `sample_lena.mat`, including the
+`demo.ipynb` walks through a complete reconstruction of `sample_lena.mat`, including the
 evaluation (PRTF, pairwise distance, PSD) and multi-GPU use with `torch.nn.DataParallel`. In
 short:
 

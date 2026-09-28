@@ -29,7 +29,7 @@ def load_lena():
     support = f["support"] > 0
     obj = f["sample"] * support
     obj[obj < 0] = 0
-    # same preparation as main.ipynb: ifftshifted amplitude and missing mask
+    # same preparation as demo.ipynb: ifftshifted amplitude and missing mask
     amplitude = np.sqrt(np.fft.ifftshift(intensity)).astype(np.float32)
     unknown = np.fft.ifftshift(missing).astype(np.float32)
     return dict(
