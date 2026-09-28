@@ -1,12 +1,9 @@
 {
  "meta": {
+  "case": "pr_RAAR_linear_NLL",
   "adapter": "pr_legacy",
-  "adapter_notes": [
-   "torch.load wrapped to default map_location='cpu' (weights saved on cuda:0)",
-   "torch.set_num_threads(1) for bit-reproducible CPU results"
-  ],
   "code": "v1.0-legacy (1f79e61cb0baa3e54b63e86c354d3ebd554cf8ca)",
-  "generated": "2026-09-28T15:45:34",
+  "precision": "float64",
   "environment": {
    "python": "3.7.12",
    "platform": "Linux-5.14.0-570.17.1.el9_6.x86_64-x86_64-with-redhat-9.6-Blue_Onyx",
@@ -16,12 +13,16 @@
    "torch": "1.6.0+cpu",
    "PIL": "9.2.0"
   },
-  "case": "func_gaussian_smoothing",
-  "seconds": 0.03
+  "f32_reference_rel_error": {
+   "u_crop": 5.353840617238402e-07,
+   "path": 5.217020908495794e-06
+  }
  },
- "values": {},
+ "values": {
+  "u_outside_abs_sum": 0.0
+ },
  "arrays": [
-  "masked_sigma1.5",
-  "plain_sigma2.3"
+  "path",
+  "u_crop"
  ]
 }

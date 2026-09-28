@@ -64,14 +64,15 @@ def rel_l2(a, b):
     return float(np.linalg.norm((a - b).ravel()) / (den if den > 0 else 1e-300))
 
 
-def compare(ref, new, tol):
+def compare(ref, new, tol, subset=False):
     """Compare two result dicts. Returns a list of human-readable failure strings.
 
     ``tol`` maps result names (or ``'*'``) to the maximum allowed relative L2 difference.
     Error strings and non-array values must match exactly (error text is compared by type).
+    With ``subset=True`` only the keys present in ``ref`` are compared.
     """
     failures = []
-    for key in sorted(set(ref) | set(new)):
+    for key in sorted(set(ref) if subset else set(ref) | set(new)):
         if key not in new:
             failures.append("{}: missing in new results".format(key))
             continue

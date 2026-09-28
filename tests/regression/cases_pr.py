@@ -18,6 +18,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 N_SEED = 2
 N_ITER = 40
 CROP = (slice(224, 288), slice(224, 288))  # contains the lena support (rows 239-272, cols 242-268)
+LOWFREQ = (slice(192, 320), slice(192, 320))  # central k-space block of a 512 x 512 frame
 
 
 def load_lena():
@@ -132,7 +133,8 @@ def run_pr(api, config_name, toggle=False, seed=10):
         return {"result": res}
     out, path = res
     if toggle:
-        return {"z_seed0": out[0], "path": path}
+        low = np.fft.fftshift(out[0])[LOWFREQ]  # central 128 x 128 block (used by the float64 check)
+        return {"z_seed0": out[0], "z_lowfreq_seed0": low, "path": path}
     outside = np.array(out)
     outside[(slice(None),) + CROP] = 0
     return {"u_crop": out[(slice(None),) + CROP], "u_outside_abs_sum": float(np.abs(outside).sum()), "path": path}
@@ -218,6 +220,15 @@ for _name in CASES:
     if _name.startswith("pr_"):
         TOLERANCE[_name] = {"*": 1e-4}
 
+# Cases with float64 references (references_f64/): iterative algorithms and the preconditioner.
+F64_CASES = [n for n in CASES if n.startswith("pr_") and "shrinkwrap" not in n] + ["preconditioner"]
+F64_DROP = ["z_seed0"]  # full k-space arrays are not stored in float64 (z_lowfreq_seed0 is)
+F64_TOLERANCE = 1e-9
+F32_NOISE_FACTOR = 3  # float32 tolerance >= this factor x the legacy code's own float32 error
+
+_SW_FIX = ("the original ShrinkWrap.forward raises TypeError (padding_mode is not an F.conv2d argument); "
+           "the native-complex port pads with F.pad(..., mode='reflect') as in DPR")
 EXPECTED_CHANGES = {
-    # filled in when a later change intentionally alters a result; see README.md
+    "pr_HIO_shrinkwrap": _SW_FIX,
+    "pr_GPS-R_shrinkwrap": _SW_FIX,
 }

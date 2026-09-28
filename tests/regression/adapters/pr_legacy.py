@@ -19,6 +19,9 @@ import sys
 import numpy as np
 import torch
 
+F64 = os.environ.get("REG_FLOAT64") == "1"
+FDT, CDT = (np.float64, np.complex128) if F64 else (np.float32, np.complex64)
+
 NAME = "pr_legacy"
 NOTES = ["torch.load wrapped to default map_location='cpu' (weights saved on cuda:0)",
          "torch.set_num_threads(1) for bit-reproducible CPU results"]
@@ -33,6 +36,8 @@ class Adapter:
         self.root = os.path.abspath(code_root)
         sys.path.insert(0, self.root)
         torch.set_num_threads(1)
+        if F64:
+            torch.set_default_dtype(torch.float64)
         _orig_load = torch.load
 
         def _load(f, map_location=None, **kwargs):
@@ -51,15 +56,15 @@ class Adapter:
     # ---- conversions -----------------------------------------------------------------
     @staticmethod
     def _r2t(x):
-        x = np.asarray(x, dtype=np.float32)
+        x = np.asarray(x, dtype=FDT)
         if x.ndim == 2:
             x = x[None]
         return torch.from_numpy(np.ascontiguousarray(x))[:, None, :, :, None]
 
     @staticmethod
     def _c2t(z):
-        z = np.asarray(z, dtype=np.complex64)
-        t = np.stack([z.real, z.imag], axis=-1).astype(np.float32)
+        z = np.asarray(z, dtype=CDT)
+        t = np.stack([z.real, z.imag], axis=-1).astype(FDT)
         return torch.from_numpy(np.ascontiguousarray(t))[:, None]
 
     @staticmethod
@@ -69,7 +74,7 @@ class Adapter:
     @staticmethod
     def _t2c(t):
         t = t[:, 0].detach().cpu().numpy()
-        return (t[..., 0] + 1j * t[..., 1]).astype(np.complex64)
+        return (t[..., 0] + 1j * t[..., 1]).astype(CDT)
 
     @contextlib.contextmanager
     def _in_root(self):
