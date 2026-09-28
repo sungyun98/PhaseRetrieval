@@ -262,6 +262,7 @@ class Preconditioner():
         output = torch.log(input + 1)
         scale = torch.max(output).clamp(min = 1)
         output = output / scale
+        self.net = self.net.to(output.device) # run the network on the device of the input
         with torch.no_grad():
             output = self.net(output, 1 - mask)
         output = output * (1 - mask)
