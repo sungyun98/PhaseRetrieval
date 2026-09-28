@@ -227,7 +227,9 @@ F64_TOLERANCE = 1e-9
 F32_NOISE_FACTOR = 3  # float32 tolerance >= this factor x the legacy code's own float32 error
 
 _SW_FIX = ("the original ShrinkWrap.forward raises TypeError (padding_mode is not an F.conv2d argument); "
-           "the native-complex port pads with F.pad(..., mode='reflect') as in DPR")
+           "the native-complex port pads with F.pad(..., mode='reflect') as in DPR, and the ShrinkWrap "
+           "Gaussian kernel is centred instead of ifftshifted (the ifftshifted kernel split the Gaussian "
+           "into lobes about +-ceil(2 * sigma_initial) px apart and enlarged the support)")
 EXPECTED_CHANGES = {
     "pr_HIO_shrinkwrap": _SW_FIX,
     "pr_GPS-R_shrinkwrap": _SW_FIX,

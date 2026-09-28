@@ -20,13 +20,14 @@ from .partialconv2d import *
 
 class GaussianFilter(nn.Module):
     """
-    get Gaussian kernel in k-space with frequency filter coefficient alpha
+    get Gaussian kernel with frequency filter coefficient alpha
+    the kernel peak is at the center (index H // 2, W // 2); apply ifftshift to use it in unshifted k-space
     alpha is originated from oversampling smoothness method (OSS)
     reference = https://doi.org/10.1107/S0021889813002471
     """
     def __init__(self, height, width):
         '''
-        generate square radius tensor
+        generate square radius tensor with origin at the center
 
         args:
             height = int
@@ -34,7 +35,6 @@ class GaussianFilter(nn.Module):
         '''
         super().__init__()
         mesh = sqmesh(height, width)
-        mesh = ifftshift(mesh)
         self.register_buffer('mesh', mesh)
 
     def forward(self, alpha):
@@ -277,10 +277,10 @@ class PhaseRetrievalUnit(nn.Module):
 
         if type == 'R':
             y = fft2(self.projS(y, True))
-            y = y * self.filter(alpha / math.sqrt(param))
+            y = y * ifftshift(self.filter(alpha / math.sqrt(param)))
             y = ifft2(y)
         elif type == 'F':
-            y = self.projS(y, True) * ifftshift(self.filter(2 * math.pi * alpha / math.sqrt(param)))
+            y = self.projS(y, True) * self.filter(2 * math.pi * alpha / math.sqrt(param))
 
         return y
 
