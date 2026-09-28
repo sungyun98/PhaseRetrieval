@@ -188,13 +188,13 @@ class Preconditioner():
         fit size of input to given heigh and width
 
         args:
-            input = torch float tensor of size 1 * 1 * H * W * 1
+            input = torch float tensor of size 1 * 1 * H * W
             fill = float
             height = integer (default = 512)
             width = integer (default = 512)
         
         returns:
-            output = torch float tensor of size 1 * 1 * H * W * 1
+            output = torch float tensor of size 1 * 1 * H * W
         '''
 
         h = input.size(2)
@@ -202,18 +202,18 @@ class Preconditioner():
         if h != height or w != width:
             if h > height:
                 c = height // 2
-                input = input[:, :, h // 2 - c:h // 2 + c, :, :]
+                input = input[:, :, h // 2 - c:h // 2 + c, :]
             elif h < height:
                 p2 = (height - h) // 2
                 p1 = (height - h) - p2
-                input = F.pad(input, pad = (0, 0, 0, 0, p1, p2), value = fill)
+                input = F.pad(input, pad = (0, 0, p1, p2), value = fill)
             if w > width:
                 c = width // 2
-                input = input[:, :, :, w // 2 - c:w // 2 + c, :]
+                input = input[:, :, :, w // 2 - c:w // 2 + c]
             elif w < width:
                 p2 = (width - w) // 2
                 p1 = (width - w) - p2
-                input = F.pad(input, pad = (0, 0, p1, p2, 0, 0), value = fill)
+                input = F.pad(input, pad = (p1, p2, 0, 0), value = fill)
 
         return input
         
@@ -227,14 +227,14 @@ class Preconditioner():
         toggle is for returning denoised data, not preconditioning kernel
         
         args:
-            input = torch float tensor of size 1 * 1 * H * W * 1
-            mask = torch float tensor of size 1 * 1 * H * W * 1
+            input = torch float tensor of size 1 * 1 * H * W
+            mask = torch float tensor of size 1 * 1 * H * W
             limit = float (default = 0.25)
             deep = bool (default = True)
             toggle = bool (default = False)
             
         returns:
-            output = torch float tensor of size 1 * 1 * H * W * 1
+            output = torch float tensor of size 1 * 1 * H * W
         '''
         
         input = input * (1 - mask)
@@ -254,7 +254,7 @@ class Preconditioner():
         scale = torch.max(output).clamp(min = 1)
         output = output / scale
         with torch.no_grad():
-            output = self.net(output.squeeze(-1), 1 - mask.squeeze(-1)).unsqueeze(-1)
+            output = self.net(output, 1 - mask)
         output = output * (1 - mask)
         output = torch.exp(output.clamp(min = 0, max = 2) * scale) - 1
         output = output / 10 # network trained for 100 times intensity, so 10 times for amplitude

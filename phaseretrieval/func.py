@@ -55,56 +55,52 @@ def fftshift(input):
     fftshift Fourier transformed r-space data
 
     args:
-        input = torch float tensor of size N * 1 * H * W * (1 for real or 2 for complex)
+        input = torch float or complex tensor of size N * 1 * H * W
 
     returns:
-        output = torch float tensor of size N * 1 * H * W * (1 for real or 2 for complex)
+        output = torch float or complex tensor of size N * 1 * H * W
     '''
 
-    di = input.size(2) // 2
-    dj = input.size(3) // 2
-    return input.roll(shifts = (di, dj), dims = (2, 3))
+    return torch.fft.fftshift(input, dim = (2, 3))
 
 def ifftshift(input):
     '''
     inverse of fftshift
 
     args:
-        input = torch float tensor of size N * 1 * H * W * (1 for real or 2 for complex)
+        input = torch float or complex tensor of size N * 1 * H * W
 
     returns:
-        output = torch float tensor of size N * 1 * H * W * (1 for real or 2 for complex)
+        output = torch float or complex tensor of size N * 1 * H * W
     '''
 
-    di = input.size(2) // 2
-    dj = input.size(3) // 2
-    return input.roll(shifts = (-di, -dj), dims = (2, 3))
+    return torch.fft.ifftshift(input, dim = (2, 3))
 
 def amplitude(input):
     '''
     get amplitude of complex tensor
 
     args:
-        input = torch float tensor of size N * 1 * H * W * 2
+        input = torch complex tensor of size N * 1 * H * W
 
     returns:
-        output = torch float tensor of size N * 1 * H * W * 1
+        output = torch float tensor of size N * 1 * H * W
     '''
 
-    return input.pow(2).sum(dim = -1, keepdim = True).sqrt()
+    return torch.abs(input)
 
 def phase(input):
     '''
     get phase of complex tensor
 
     args:
-        input = torch float tensor of size N * 1 * H * W * 2
+        input = torch complex tensor of size N * 1 * H * W
 
     returns:
-        output = torch float tensor of size N * 1 * H * W * 1
+        output = torch complex tensor of size N * 1 * H * W
     '''
 
-    r = amplitude(input)
+    r = torch.abs(input)
     r[r == 0] = 1
     return input / r
 
@@ -116,15 +112,18 @@ def sqmesh(height, width):
     args:
         hight = integer
         width = integer
+
+    returns:
+        output = torch float tensor of size 1 * 1 * H * W
     '''
     ci = height // 2
     cj = width // 2
     li = torch.linspace(-ci, height - ci - 1, steps = height)
     lj = torch.linspace(-cj, width - cj - 1, steps = width)
-    mi, mj = torch.meshgrid(li, lj)
+    mi, mj = torch.meshgrid(li, lj, indexing = 'ij')
     m = mi.pow(2) + mj.pow(2)
 
-    return m.view(1, 1, height, width, 1)
+    return m.view(1, 1, height, width)
 
 def freqfilter(size, count):
     '''
@@ -169,7 +168,6 @@ def GaussianSmoothing(input, sigma, mask = None):
     kernel = sqmesh(ksize, ksize)
     kernel = torch.exp(-0.5 * kernel / sigma ** 2)
     kernel = kernel / kernel.sum()
-    kernel = kernel.squeeze(-1)
     
     gfilter = PartialConv2d(1, 1, ksize, padding = psize, padding_mode = 'reflect', bias = False)
     gfilter.weight.data = kernel
@@ -178,4 +176,4 @@ def GaussianSmoothing(input, sigma, mask = None):
     output = gfilter(input, mask_in = mask)
     if mask is not None:
         output = output * mask
-    return output.unsqueeze(-1)
+    return output

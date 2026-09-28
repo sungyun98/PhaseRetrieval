@@ -2,7 +2,7 @@
 # Phase Retrieval Algorithms : HIO, RAAR, GPS, gRAAR, dRAAR, dpGPS
 #
 # Author: SUNG YUN LEE
-#   
+#
 # Contact: sungyun98@postech.ac.kr
 ###############################################################################
 
@@ -12,6 +12,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.fft import fft2, ifft2
 
 from .func import *
 from .preconditioner import *
@@ -35,7 +36,7 @@ class GaussianFilter(nn.Module):
         mesh = sqmesh(height, width)
         mesh = ifftshift(mesh)
         self.register_buffer('mesh', mesh)
-    
+
     def forward(self, alpha):
         '''
         generate Gaussian filter with coefficient alpha
@@ -44,9 +45,9 @@ class GaussianFilter(nn.Module):
             alpha = float
 
         returns:
-            output = torch float tensor of size 1 * 1 * H * W * 1
+            output = torch float tensor of size 1 * 1 * H * W
         '''
-        
+
         filter = torch.exp(-0.5 * self.mesh / alpha ** 2)
         return filter / filter.max()
 
@@ -73,12 +74,11 @@ class ShrinkWrap(GaussianFilter):
         self.sigma_limit = sigma_limit
         self.ratio = ratio_update
         self.threshold = threshold
-        
+
         # calculate initial filter
         size = 2 * math.ceil(2 * self.sigma) + 1
         self.pad = math.ceil(2 * self.sigma)
         super().__init__(size, size)
-        self.mesh = self.mesh.squeeze(-1)
         self.register_buffer('filter', self.mesh * 0)
         self.update(False)
 
@@ -96,23 +96,24 @@ class ShrinkWrap(GaussianFilter):
                 self.sigma = self.sigma * (1 - self.ratio)
             self.filter = torch.exp(-0.5 * self.mesh / self.sigma ** 2)
             self.filter = self.filter / self.filter.sum()
-        
+
     def forward(self, u):
         '''
         calculate new support constraint by Gaussian filtered r-space data
         threshold is used to generate new suppport constraint
 
         args:
-            u = torch float tensor of size N * 1 * H * W * 1
+            u = torch float tensor of size N * 1 * H * W
 
         returns:
-            output = torch float tensor of size N * 1 * H * W * 1
+            output = torch float tensor of size N * 1 * H * W
         '''
 
         n = u.size(0)
-        u = F.conv2d(u.squeeze(-1), weight = self.filter, padding = self.pad, padding_mode = 'reflect')
+        u = F.conv2d(F.pad(u, pad = (self.pad, self.pad, self.pad, self.pad), mode = 'reflect'),
+                     weight = self.filter)
         u_max = u.view(n, -1).max(dim = -1).values.view(n, 1, 1, 1)
-        return torch.gt(u, u_max * self.threshold).unsqueeze(-1).float()
+        return torch.gt(u, u_max * self.threshold).float()
 
 class PhaseRetrievalUnit(nn.Module):
     '''
@@ -124,16 +125,16 @@ class PhaseRetrievalUnit(nn.Module):
         '''
         prepare iteration unit
 
-        preconditioner is needed for dpGPS
+        preconditioner is needed for dRAAR and dpGPS
 
         args:
-            input = torch float tensor of size 1 * 1 * H * W * 1
-            support = torch float tensor of size (1 or N) * 1 * H * W * 1
-            unknown = torch float tensor of size 1 * 1 * H * W * 1
+            input = torch float tensor of size 1 * 1 * H * W
+            support = torch float tensor of size (1 or N) * 1 * H * W
+            unknown = torch float tensor of size 1 * 1 * H * W
             type = string
 
         kwargs:
-            preconditioner = torch float tensor of size 1 * 1 * H * W * 1
+            preconditioner = torch float tensor of size 1 * 1 * H * W
         '''
 
         super().__init__()
@@ -144,7 +145,7 @@ class PhaseRetrievalUnit(nn.Module):
 
         # allocate denoised magnitude for projection operator on denoised pattern
         if type in ['gRAAR']:
-            input_dn = GaussianSmoothing(fftshift(input).pow(2).squeeze(-1), sigma = 1.5, mask = 1 - fftshift(unknown).squeeze(-1)).sqrt()
+            input_dn = GaussianSmoothing(fftshift(input).pow(2), sigma = 1.5, mask = 1 - fftshift(unknown)).sqrt()
             input_dn = ifftshift(input_dn)
             self.register_buffer('magnitude_dn', input_dn)
         if type in ['dRAAR']:
@@ -164,7 +165,7 @@ class PhaseRetrievalUnit(nn.Module):
         update support constraint
 
         args:
-            support = torch float tensor of size (1 or N) * 1 * H * W * 1
+            support = torch float tensor of size (1 or N) * 1 * H * W
         '''
         self.support = support
 
@@ -176,19 +177,17 @@ class PhaseRetrievalUnit(nn.Module):
         convex conjugation of support constraint supported
 
         args:
-            y = torch float tensor of size N * 1 * H * W * 2
+            y = torch complex tensor of size N * 1 * H * W
 
         returns:
-            output = torch float tensor of size N * 1 * H * W * 2
+            output = torch complex tensor of size N * 1 * H * W
+            (torch float tensor if conj is False)
         '''
 
         if not conj:
-            y = y.clamp(min = 0) * self.support
-            y[:, :, :, :, 1:] = 0
-            return y
-            
-        y_real = y[:, :, :, :, :1]
-        y[:, :, :, :, :1] = y_real - y_real.clamp(min = 0) * self.support
+            y = y.real.clamp(min = 0) * self.support
+        else:
+            y.real = y.real - y.real.clamp(min = 0) * self.support
 
         return y
 
@@ -199,12 +198,12 @@ class PhaseRetrievalUnit(nn.Module):
         constraint is on amplitude of complex tensor
 
         args:
-            z = torch float tensor of size N * 1 * H * W * 2
+            z = torch complex tensor of size N * 1 * H * W
 
         returns:
-            outputs = torch float tensor of size N * 1 * H * W * 2
+            outputs = torch complex tensor of size N * 1 * H * W
         '''
-        
+
         if denoised:
             return z * self.unknown + self.magnitude_dn * phase(z) * (1 - self.unknown)
         else:
@@ -217,13 +216,13 @@ class PhaseRetrievalUnit(nn.Module):
         constraint is on amplitude of complex tensor
 
         args:
-            u = torch float tensor of size N * 1 * H * W * 2
+            u = torch complex tensor of size N * 1 * H * W
 
         returns:
-            outputs = torch float tensor of size N * 1 * H * W * 2
+            outputs = torch complex tensor of size N * 1 * H * W
         '''
-        
-        return torch.ifft(self.projT(torch.fft(u, signal_ndim = 2)), signal_ndim = 2)
+
+        return ifft2(self.projT(fft2(u)))
 
     def reflS(self, u):
         '''
@@ -232,14 +231,14 @@ class PhaseRetrievalUnit(nn.Module):
         constraint is non-negative real
 
         args:
-            u = torch float tensor of size N * 1 * H * W * 2
+            u = torch complex tensor of size N * 1 * H * W
 
         returns:
-            outputs = torch float tensor of size N * 1 * H * W * 2
+            outputs = torch complex tensor of size N * 1 * H * W
         '''
-        
+
         return 2 * self.projS(u, conj = False) - u
-    
+
     def reflM(self, u):
         '''
         reflection operator on magnitude constraint in r-space
@@ -247,12 +246,12 @@ class PhaseRetrievalUnit(nn.Module):
         constraint is on amplitude of complex tensor
 
         args:
-            u = torch float tensor of size N * 1 * H * W * 2
+            u = torch complex tensor of size N * 1 * H * W
 
         returns:
-            outputs = torch float tensor of size N * 1 * H * W * 2
+            outputs = torch complex tensor of size N * 1 * H * W
         '''
-        
+
         return 2 * self.projM(u) - u
 
     def proxS(self, y, param, alpha, type, conj = True):
@@ -264,25 +263,25 @@ class PhaseRetrievalUnit(nn.Module):
         Moreau-Yosida regularization with alpha is applied (R and F variants)
 
         args:
-            y = torch float tensor of size N * 1 * H * W * 2
+            y = torch complex tensor of size N * 1 * H * W
             param = float
             alpha = float
             type = string
-        
+
         returns:
-            output = torch float tensor of size N * 1 * H * W * 2
+            output = torch complex tensor of size N * 1 * H * W
         '''
 
         if not conj:
             raise Exception('Proximal operator on support constraint only supports convex conjugation version.')
-        
+
         if type == 'R':
-            y = torch.fft(self.projS(y, True), signal_ndim = 2)
+            y = fft2(self.projS(y, True))
             y = y * self.filter(alpha / math.sqrt(param))
-            y = torch.ifft(y, signal_ndim = 2)
+            y = ifft2(y)
         elif type == 'F':
             y = self.projS(y, True) * ifftshift(self.filter(2 * math.pi * alpha / math.sqrt(param)))
-        
+
         return y
 
 
@@ -294,12 +293,12 @@ class PhaseRetrievalUnit(nn.Module):
         tensor param can be used
 
         args:
-            z = torch float tensor of size N * 1 * H * W * 2
-            param = float or torch float tensor of size 1 * 1 * H * W * (1 or 2)
+            z = torch complex tensor of size N * 1 * H * W
+            param = float or torch float tensor of size 1 * 1 * H * W
             sigma = float
 
         returns:
-            output = torch float tensor of size N * 1 * H * W * 2
+            output = torch complex tensor of size N * 1 * H * W
         '''
 
         return (param * self.projT(z) + sigma * z) / (param + sigma)
@@ -309,23 +308,22 @@ class PhaseRetrievalUnit(nn.Module):
         iteration of phase retrieval algorithms
 
         for [HIO, RAAR, gRAAR, dRAAR], if toggle is True, boundary push is performed
-        
+
         kwargs:
-            u = torch float tensor of size N * 1 * H * W * 2 (for HIO, RAAR, gRAAR, dRAAR)
+            u = torch complex tensor of size N * 1 * H * W (for HIO, RAAR, gRAAR, dRAAR)
             beta = float (for HIO, RAAR, gRAAR, dRAAR)
             toggle = bool (for HIO, RAAR, gRAAR, dRAAR)
-            z = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
-            y = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
+            z = torch complex tensor of size N * 1 * H * W (for GPS, dpGPS)
+            y = torch complex tensor of size N * 1 * H * W (for GPS, dpGPS)
             sigma = float (for GPS, dpGPS)
             alpha = float (for GPS, dpGPS)
             t = float (for GPS)
             s = float (for GPS)
-            inner_iteration = int (for dpGPS)
-        
+
         returns:
-            u = torch float tensor of size N * 1 * H * W * 2 (for HIO, RAAR, gRAAR, dRAAR)
-            z = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
-            y = torch float tensor of size N * 1 * H * W * 2 (for GPS, dpGPS)
+            u = torch complex tensor of size N * 1 * H * W (for HIO, RAAR, gRAAR, dRAAR)
+            z = torch complex tensor of size N * 1 * H * W (for GPS, dpGPS)
+            y = torch complex tensor of size N * 1 * H * W (for GPS, dpGPS)
         '''
         if self.type == 'HIO':
             u = kwargs.pop('u')
@@ -334,33 +332,33 @@ class PhaseRetrievalUnit(nn.Module):
 
             un = self.projM(u)
             # get intersection of support constraint and positivity
-            const = self.support * torch.ge(un, 0)[:, :, :, :, :1]
+            const = self.support * torch.ge(un.real, 0)
             if not toggle:
                 # HIO
                 un = un * const + (u - beta * un) * (1 - const)
             else:
                 # boundary push
                 un = un * const + beta * un * (1 - const)
-            
+
             return un
 
         elif self.type in ['RAAR', 'gRAAR', 'dRAAR']:
             u = kwargs.pop('u')
             beta = kwargs.pop('beta')
             toggle = kwargs.pop('toggle')
-            
+
             if not toggle:
                 if self.type == 'RAAR':
                     # RAAR
                     un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * self.projM(u)
                 elif self.type in ['gRAAR', 'dRAAR']:
                     # gRAAR or dRAAR
-                    z = self.projT(torch.fft(u, signal_ndim = 2), True)
-                    un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * torch.ifft(z, signal_ndim = 2)
+                    z = self.projT(fft2(u), True)
+                    un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * ifft2(z)
             else:
                 un = self.projM(u)
                 # get intersection of support constraint and positivity
-                const = self.support * torch.ge(un, 0)[:, :, :, :, :1]
+                const = self.support * torch.ge(un.real, 0)
                 # boundary push
                 un = un * const + beta * un * (1 - const)
             return un
@@ -374,11 +372,11 @@ class PhaseRetrievalUnit(nn.Module):
             s = kwargs.pop('s')
             type = 'R' if self.type == 'GPS-R' else 'F'
             # GPS
-            zn = z - t * torch.fft(y, signal_ndim = 2)
+            zn = z - t * fft2(y)
             zn = self.proxT(zn, t, sigma)
-            y = y + s * torch.ifft(2 * zn - z, signal_ndim = 2)
+            y = y + s * ifft2(2 * zn - z)
             y = self.proxS(y, s, alpha, type)
-                
+
             return zn, y
 
         elif self.type in ['dpGPS-R','dpGPS-F']:
@@ -390,16 +388,16 @@ class PhaseRetrievalUnit(nn.Module):
             type = 'R' if self.type == 'dpGPS-R' else 'F'
             # dpGPS with sigma condition
             if sigma < 1:
-                zn = z - torch.fft(y, signal_ndim = 2) / self.kernel
+                zn = z - fft2(y) / self.kernel
                 zn = self.proxT(zn, 1 / self.kernel, sigma)
             else:
-                zn = z - torch.fft(y, signal_ndim = 2)
+                zn = z - fft2(y)
                 zn = self.proxT(zn, 1, sigma)
-            y = y + gamma * torch.ifft(2 * zn - z, signal_ndim = 2)
+            y = y + gamma * ifft2(2 * zn - z)
             y = self.proxS(y, gamma, alpha, type)
-                
+
             return zn, y
-            
+
         else:
             raise ValueError('{} is not supported for phase retrieval.'.format(self.type))
 
@@ -445,16 +443,16 @@ class PhaseRetrieval(nn.Module):
         initialize phase retrieval iterator
 
         args:
-            input = torch float tensor of size N * 1 * H * W * 1
-            support = torch float tensor of size N * 1 * H * W * 1
-            unknown = torch float tensor of size N * 1 * H * W * 1
+            input = torch float tensor of size N * 1 * H * W
+            support = torch float tensor of size N * 1 * H * W
+            unknown = torch float tensor of size N * 1 * H * W
             algorithm = string
             error = string
             shrinkwrap = bool (default = False)
 
         kwargs:
-            limit = float (for dpGPS)
-            deep = bool (for dpGPS)
+            limit = float (for dRAAR, dpGPS)
+            deep = bool (for dRAAR, dpGPS)
             sigma_initial = float (for shrinkwrap)
             sigma_limit = float (for shrinkwrap)
             ratio_update = float (for shrinkwrap)
@@ -476,7 +474,7 @@ class PhaseRetrieval(nn.Module):
             self.beta_type = kwargs.pop('beta_type')
             if self.beta_type != 'const':
                 self.beta_lim = kwargs.pop('beta_lim')
-        # get preconditioner for dpGPS
+        # get preconditioner for dRAAR and dpGPS
         if algorithm in ['dRAAR', 'dpGPS-R', 'dpGPS-F']:
             denoiser = Preconditioner()
             limit = kwargs.pop('limit')
@@ -506,12 +504,12 @@ class PhaseRetrieval(nn.Module):
             input = any
             iteration = int
             name = string (default = 'parameter')
-        
+
         returns:
             step = list
             list = list
         '''
-        
+
         if isinstance(input, (tuple, list)):
             step = [round(pos * iteration) for pos in input[0::2]]
             plist = input[1::2]
@@ -529,32 +527,32 @@ class PhaseRetrieval(nn.Module):
         if toggle is True, projected r-space data is returned
 
         kwargs:
-            u = torch float tensor of size N * 1 * H * W * 2
-            z = torch float tensor of size N * 1 * H * W * 2
+            u = torch complex tensor of size N * 1 * H * W
+            z = torch complex tensor of size N * 1 * H * W
 
         returns:
-            output = torch float tensor of size N * 1 * H * W * 1
+            output = torch float tensor of size N * 1 * H * W
         '''
 
         if 'u' in kwargs:
             u = kwargs.pop('u')
             u = self.block.projS(u, conj = False)
             if toggle:
-                return u[:, :, :, :, :1]
-            u = torch.fft(u, signal_ndim = 2)
-            return amplitude(u)
+                return u.real
+            else:
+                return torch.abs(fft2(u))
+
         elif 'z' in kwargs:
             z = kwargs.pop('z')
-            z = torch.ifft(z, signal_ndim = 2)
-            return self.getAmplitude(u = z, toggle = toggle)
+            return self.getAmplitude(u = ifft2(z), toggle = toggle)
 
     def getError(self, a):
         '''
         get error of phase retrieved amplitude
 
         args:
-            a = torch float tensor of size N * 1 * H * W * 1
-        
+            a = torch float tensor of size N * 1 * H * W
+
         returns:
             output = torch float tensor of size N
         '''
@@ -563,7 +561,7 @@ class PhaseRetrieval(nn.Module):
         a = a * (1 - self.unknown)
         if self.error == 'R':
             # R-factor
-            R = torch.abs(a - a0).sum(dim = (1, 2, 3, 4)) / a0.sum()
+            R = torch.abs(a - a0).sum(dim = (1, 2, 3)) / a0.sum()
             return R
         elif self.error == 'NLL':
             # negative Poisson log-likelihood
@@ -572,10 +570,10 @@ class PhaseRetrieval(nn.Module):
             valid = (1 - self.unknown) * (i0 > 1)
             NLL = F.poisson_nll_loss(i, i0, log_input = False, full = True, reduction = 'none')
             NLL = NLL * valid
-            return NLL.sum(dim = (1, 2, 3, 4)) / valid.sum()
+            return NLL.sum(dim = (1, 2, 3)) / valid.sum()
         else:
             raise ValueError('{} is not supported for error metric.'.format(self.error))
-    
+
     def forward(self, iteration, initial_phase, toggle = False, **kwargs):
         '''
         perform phase retrieval alrorithm with given iteration count
@@ -587,7 +585,7 @@ class PhaseRetrieval(nn.Module):
 
         args:
             iteration = int
-            initial_phase = torch float tensor of size N * 1 * H * W * 2
+            initial_phase = torch complex tensor of size N * 1 * H * W
             toggle = bool
 
         kwargs:
@@ -599,7 +597,8 @@ class PhaseRetrieval(nn.Module):
             s = float or tuple or list (for GPS)
 
         returns:
-            output = torch float tensor of size N * 1 * H * W * (1 or 2)
+            output = torch float tensor of size N * 1 * H * W
+            (torch complex tensor if toggle is True)
             path = torch float tensor of size N * iteration
         '''
 
@@ -619,7 +618,7 @@ class PhaseRetrieval(nn.Module):
             if self.algorithm in ['HIO', 'RAAR', 'gRAAR', 'dRAAR']:
                 # initialize
                 if n == 0:
-                    u_best = torch.ifft(self.magnitude * initial_phase, signal_ndim = 2)
+                    u_best = ifft2(self.magnitude * initial_phase)
                     beta_step, beta_list = self.getParameter(kwargs.pop('beta'), iteration, name = 'beta')
                     bp_step = round((1 - kwargs.pop('boundary_push')) * iteration)
                 # update parameter
@@ -654,7 +653,7 @@ class PhaseRetrieval(nn.Module):
                 # update best
                 trigger = torch.le(error, error_min if n > 0 else error)
                 error_min[trigger] = error[trigger]
-                u_best[trigger, :, :, :, :] = var['u'][trigger, :, :, :, :]
+                u_best[trigger, :, :, :] = var['u'][trigger, :, :, :]
 
             elif self.algorithm in ['GPS-R', 'GPS-F', 'dpGPS-R', 'dpGPS-F']:
                 # initialize
@@ -697,12 +696,12 @@ class PhaseRetrieval(nn.Module):
                 # update best
                 trigger = torch.le(error, error_min if n > 0 else error)
                 error_min[trigger] = error[trigger]
-                z_best[trigger, :, :, :, :] = var['z'][trigger, :, :, :, :]
-                y_best[trigger, :, :, :, :] = var['y'][trigger, :, :, :, :]
+                z_best[trigger, :, :, :] = var['z'][trigger, :, :, :]
+                y_best[trigger, :, :, :] = var['y'][trigger, :, :, :]
 
             else:
                 raise ValueError('{} is not supported for phase retrieval.'.format(self.algorithm))
-            
+
             # shrinkwrap
             if self.shrinkwrap:
                 if (n + 1) % self.interval == 0 and (n + 1) < iteration:
@@ -726,7 +725,7 @@ class PhaseRetrieval(nn.Module):
                 output = self.getAmplitude(z = z_best, toggle = True)
         elif u_best is not None:
             if toggle:
-                output = torch.fft(u_best, signal_ndim = 2)
+                output = fft2(u_best)
             else:
                 output = self.getAmplitude(u = u_best, toggle = True)
         else:
