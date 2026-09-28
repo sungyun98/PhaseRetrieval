@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phaseretrieval"
+version = "2.0.0"
+description = "Phase retrieval algorithms (HIO, RAAR, gRAAR, dRAAR, GPS, dpGPS) and analysis utilities for coherent diffraction imaging, based on PyTorch"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "BSD-2-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Sung Yun Lee", email = "sungyun98@g.postech.edu" }]
+keywords = ["phase retrieval", "coherent diffraction imaging", "pytorch"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+# PyTorch is not pinned to a CUDA build; install the build matching your driver first
+# (see README). Lower bounds are the oldest versions covered by tests/regression.
+dependencies = [
+    "torch>=2.1",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-image>=0.20",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+notebook = ["matplotlib", "jupyterlab"]
+
+[project.urls]
+Repository = "https://github.com/sungyun98/PhaseRetrieval"
+Paper = "https://doi.org/10.1103/PhysRevResearch.3.043066"
+
+[tool.setuptools]
+packages = ["phaseretrieval"]
+
+[tool.setuptools.package-data]
+phaseretrieval = ["param_pretrained.pth"]
