@@ -7,7 +7,23 @@
 > with `from phaseretrieval import ...`. The original code remains available at the tag
 > `v1.0-legacy`.
 
-Phase retrieval module based on Python 3.7.4 and PyTorch 1.6.0 with CUDA 10.2
+Phase retrieval module based on PyTorch
+
+## Requirements
+
+Tested with Python 3.12, PyTorch 2.14.0 (CUDA 12.6 build), NumPy 2.5.3, SciPy 1.18.1,
+scikit-image 0.26.0 and tqdm 4.70.1; the exact versions are listed in `requirements.txt`.
+Minimum versions: Python 3.10, PyTorch 2.1, NumPy 1.26, SciPy 1.11, scikit-image 0.20.
+
+```bash
+conda env create -f environment.yml
+# or, in an existing environment:
+pip install -r requirements.txt && pip install -e .
+```
+
+The PyTorch build in `requirements.txt` uses CUDA 12.6 and runs with NVIDIA drivers 525 or
+newer; replace `cu126` with `cpu` for a CPU-only installation. The original code for Python 3.7,
+PyTorch 1.6 and CUDA 10.2 is available at the tag `v1.0-legacy`.
 
 Multi-GPU calculation supported by torch.nn.DataParallel wrapper
 
