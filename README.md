@@ -56,4 +56,11 @@ pretrained parameters for phaseretrieval.preconditioner.DenoisingNetwork is requ
 
 note that references of each functions are written in docstrings
 
-partial convolution is directly imported from <https://github.com/NVIDIA/partialconv>
+## License
+
+This code is released under the BSD 2-Clause License (`LICENSE`), except for the third-party
+code below, which keeps its original license (full text in `LICENSES/`):
+
+| File | Source | License |
+|---|---|---|
+| `phaseretrieval/partialconv2d.py` | [NVIDIA/partialconv](https://github.com/NVIDIA/partialconv) `models/partialconv2d.py` | BSD 3-Clause, Copyright (c) 2018 NVIDIA Corporation |

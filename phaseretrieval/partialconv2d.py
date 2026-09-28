@@ -5,6 +5,9 @@
 #
 # Author & Contact: Guilin Liu (guilinl@nvidia.com)
 ###############################################################################
+# Copied from https://github.com/NVIDIA/partialconv/blob/a99cd7cb9f6469c02181d9aa34fe5abd95fb0154/models/partialconv2d.py
+# Full license text: LICENSES/partialconv-BSD-3-Clause.txt
+# Changes: added __all__.
 
 __all__ = ['PartialConv2d']
 
