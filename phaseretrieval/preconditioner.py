@@ -6,28 +6,36 @@
 # Contact: sungyun98@g.postech.edu
 ###############################################################################
 
+"""Denoising network and the preconditioning kernel for dRAAR and dpGPS."""
+
 __all__ = ["Preconditioner"]
 
 import math
 from importlib import resources
+from os import PathLike
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from .func import fftshift, ifftshift
 from .partialconv2d import PartialConv2d
 
 
 class DenoisingNetwork(nn.Module):
-    """
-    denoising network for generating preconditioning kernel
+    """Denoising network that generates the preconditioning kernel.
 
-    partial convolutional U-net from https://arxiv.org/abs/1804.07723v2
-    pointwise flip-mixing layer is added for reflecting centrosymmetry
+    A partial convolutional U-net (https://arxiv.org/abs/1804.07723v2) with a pointwise
+    flip-mixing layer at the bottleneck to reflect the centrosymmetry of diffraction patterns.
+
+    Parameters
+    ----------
+    cnum : int, default 16
+        Number of channels of the first layer; deeper layers use multiples of it.
     """
 
-    def __init__(self, cnum=16):
+    def __init__(self, cnum: int = 16) -> None:
         super().__init__()
 
         # Encoder
@@ -74,7 +82,22 @@ class DenoisingNetwork(nn.Module):
         self.bn15 = nn.BatchNorm2d(cnum)
         self.pconv16 = PartialConv2d(cnum + 1, 1, 3, 1, 1)
 
-    def forward(self, x0, m0):
+    def forward(self, x0: Tensor, m0: Tensor) -> Tensor:
+        """Denoise a normalized, fftshifted diffraction pattern.
+
+        Parameters
+        ----------
+        x0 : torch.Tensor
+            Real tensor of shape ``(N, 1, H, W)``, with ``H`` and ``W`` multiples of 256
+            (`Preconditioner` uses 512 x 512): ``log(amplitude + 1)`` divided by its maximum.
+        m0 : torch.Tensor
+            Real tensor of the same shape, 1 for measured and 0 for missing pixels.
+
+        Returns
+        -------
+        torch.Tensor
+            Real tensor of shape ``(N, 1, H, W)``: denoised input on the same scale.
+        """
         # Encoder
         x1, m = self.pconv1(x0, mask_in=m0)
         x1 = self.bn1(x1)
@@ -167,27 +190,30 @@ class DenoisingNetwork(nn.Module):
 
 
 class Preconditioner:
+    """Preconditioning kernel for dRAAR and dpGPS from the pretrained denoising network.
+
+    The kernel is the ratio of the denoised to the measured amplitude, limited to
+    ``[1 - limit, 1 + limit]``, on pixels with at least one photon. A pixel counts as having
+    photons when its intensity exceeds 0.5 photon, the half maximum of a single-photon count
+    with normal noise of standard deviation 0.5.
+
+    The input must be the k-space amplitude (not the intensity) scaled to photon counts (not
+    detector counts).
+
+    Parameters
+    ----------
+    cnum : int, default 16
+        Channel number of `DenoisingNetwork`; must match the weights.
+    path : str or os.PathLike, optional
+        Network weights (a state dict). By default, ``param_pretrained.pth`` shipped with the
+        package. The weights are loaded on the CPU with ``weights_only=True``.
+
+    References
+    ----------
+    .. [1] https://doi.org/10.1103/PhysRevResearch.3.043066
     """
-    preconditioning kernel for dRAAR and dpGPS
 
-    calculate inverted change ratio by denoising neural network in single photon region limited by [1-limit, 1+limit]
-    single photon region is defined as FWHM of single photon count assuming normal distribution of sigma 0.5
-    if denoising network not cover all single photon region, uncalculated value is set to maximum value 1+limit
-    input should be k-space amplitude data, not intensity data
-    input value should be scaled to photon count, not detector count
-    reference = https://doi.org/10.1103/PhysRevResearch.3.043066
-    """
-
-    def __init__(self, cnum=16, path=None):
-        """
-        load pretrained denoising network
-
-        the weights are loaded on CPU with weights_only = True
-
-        args:
-            cnum = integer (default = 16)
-            path = string (default = None, the param_pretrained.pth file shipped with the package)
-        """
+    def __init__(self, cnum: int = 16, path: str | PathLike | None = None) -> None:
         self.net = DenoisingNetwork(cnum=cnum).eval()
         if path is None:
             with resources.as_file(
@@ -198,20 +224,23 @@ class Preconditioner:
             state = torch.load(path, map_location="cpu", weights_only=True)
         self.net.load_state_dict(state, strict=True)
 
-    def fitSize(self, input, fill, height=512, width=512):
+    def fitSize(self, input: Tensor, fill: float, height: int = 512, width: int = 512) -> Tensor:
+        """Crop or pad a centred tensor to a given size.
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            Real tensor of shape ``(N, 1, H, W)`` with the centre at ``(H // 2, W // 2)``.
+        fill : float
+            Value of padded pixels.
+        height, width : int, default 512
+            Output size. Crops keep the centre; odd paddings put the extra pixel first.
+
+        Returns
+        -------
+        torch.Tensor
+            Real tensor of shape ``(N, 1, height, width)``.
         """
-        fit size of input to given heigh and width
-
-        args:
-            input = torch float tensor of size 1 * 1 * H * W
-            fill = float
-            height = integer (default = 512)
-            width = integer (default = 512)
-
-        returns:
-            output = torch float tensor of size 1 * 1 * H * W
-        """
-
         h = input.size(2)
         w = input.size(3)
         if h != height or w != width:
@@ -232,26 +261,43 @@ class Preconditioner:
 
         return input
 
-    def getKernel(self, input, mask, limit=0.25, deep=True, toggle=False):
+    def getKernel(
+        self,
+        input: Tensor,
+        mask: Tensor,
+        limit: float = 0.25,
+        deep: bool = True,
+        toggle: bool = False,
+    ) -> Tensor:
+        """Generate the preconditioning kernel, or the denoised amplitude.
+
+        The network runs on the central 512 x 512 region, on the device of ``input``. Outside
+        this region the kernel is 1; it is ``1 - limit`` on pixels without photons and 1 on
+        missing pixels.
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            Measured k-space amplitude of shape ``(1, 1, H, W)``, not fftshifted, in photon
+            counts.
+        mask : torch.Tensor
+            Real tensor of shape ``(1, 1, H, W)``, not fftshifted: 1 for missing, 0 for
+            measured pixels.
+        limit : float, default 0.25
+            Limit of the change ratio of the denoised amplitude, ``[1 - limit, 1 + limit]``.
+            Not applied if ``limit`` is not positive.
+        deep : bool, default True
+            If False, return a constant kernel instead: ``1 + limit`` on pixels with photons.
+        toggle : bool, default False
+            If True, return the denoised amplitude instead of the kernel.
+
+        Returns
+        -------
+        torch.Tensor
+            Real tensor of shape ``(1, 1, H, W)``: the kernel, not fftshifted, or, if
+            ``toggle`` is True, the denoised amplitude, fftshifted (zero frequency at the
+            centre), equal to ``input`` outside the region processed by the network.
         """
-        generate preconditioning kernel
-
-        limit is change ratio limit for denoised data
-        if limit is not positive, change ratio is not limited
-        deep is switch for deep learning based kernel
-        toggle is for returning denoised data, not preconditioning kernel
-
-        args:
-            input = torch float tensor of size 1 * 1 * H * W
-            mask = torch float tensor of size 1 * 1 * H * W
-            limit = float (default = 0.25)
-            deep = bool (default = True)
-            toggle = bool (default = False)
-
-        returns:
-            output = torch float tensor of size 1 * 1 * H * W
-        """
-
         input = input * (1 - mask)
         input = fftshift(input)
         mask = fftshift(mask)

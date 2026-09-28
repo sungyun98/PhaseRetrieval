@@ -6,6 +6,12 @@
 # Contact: sungyun98@g.postech.edu
 ###############################################################################
 
+"""Basic functions shared by the phase retrieval algorithms.
+
+Tensors follow the layout ``(N, 1, H, W)``: ``N`` images (random starts or data sets), one
+channel, height ``H`` and width ``W``.
+"""
+
 __all__ = [
     "MakeSupport",
     "fftshift",
@@ -18,32 +24,50 @@ __all__ = [
 ]
 
 import math
+from typing import Any
 
 import numpy as np
 import torch
+from torch import Tensor
 
 from .partialconv2d import PartialConv2d
 
 
-def MakeSupport(input, **kwargs):
+def MakeSupport(input: np.ndarray, **kwargs: Any) -> np.ndarray:
+    """Generate a rectangular or an autocorrelation-based support.
+
+    The autocorrelation support follows the ShrinkWrap reference
+    (https://doi.org/10.1103/PhysRevB.68.140101).
+
+    Parameters
+    ----------
+    input : numpy.ndarray
+        Real array of shape ``(H, W)``. For ``type='auto'`` it must be the fftshifted intensity
+        (zero frequency at the centre); for ``type='rect'`` only its shape and dtype are used.
+    **kwargs
+        Keyword arguments listed below; other keywords are ignored.
+
+    Other Parameters
+    ----------------
+    type : {'rect', 'auto'}
+        ``'rect'`` for a rectangle centred at ``(H // 2, W // 2)``, ``'auto'`` for the
+        thresholded autocorrelation of the object (inverse Fourier transform of the intensity).
+    radius : tuple of int
+        Half sizes ``(ri, rj)`` of the rectangle along the two axes (``type='rect'``).
+    threshold : float
+        Threshold relative to the maximum of the autocorrelation (``type='auto'``).
+
+    Returns
+    -------
+    numpy.ndarray
+        Support of shape ``(H, W)``, with the zero position at the centre: zeros and ones of the
+        dtype of ``input`` for ``type='rect'``, bool for ``type='auto'``.
+
+    Raises
+    ------
+    ValueError
+        If ``type`` is neither ``'rect'`` nor ``'auto'``.
     """
-    generate rectangular or autocorrelation-based support
-
-    input should be fftshifted intensity data for autocorrelation support
-    autocorrelation support is from ShrinkWrap reference
-
-    args:
-        input = numpy float ndarray of size H * W
-
-    kwargs:
-        type = string
-        radius = tuple or list of size 2 (for const)
-        threshold = float (for auto)
-
-    returns:
-        output = numpy float ndarray of size H * W
-    """
-
     h = input.shape[0]
     w = input.shape[1]
     type = kwargs.pop("type")
@@ -63,75 +87,87 @@ def MakeSupport(input, **kwargs):
     return support
 
 
-def fftshift(input):
+def fftshift(input: Tensor) -> Tensor:
+    """Shift the zero-frequency component to the centre of the last two dimensions.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        Real or complex tensor of shape ``(N, 1, H, W)``.
+
+    Returns
+    -------
+    torch.Tensor
+        Shifted tensor with the shape and dtype of ``input``.
     """
-    fftshift Fourier transformed r-space data
-
-    args:
-        input = torch float or complex tensor of size N * 1 * H * W
-
-    returns:
-        output = torch float or complex tensor of size N * 1 * H * W
-    """
-
     return torch.fft.fftshift(input, dim=(2, 3))
 
 
-def ifftshift(input):
+def ifftshift(input: Tensor) -> Tensor:
+    """Invert `fftshift`, moving the centre back to index ``(0, 0)``.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        Real or complex tensor of shape ``(N, 1, H, W)``.
+
+    Returns
+    -------
+    torch.Tensor
+        Shifted tensor with the shape and dtype of ``input``.
     """
-    inverse of fftshift
-
-    args:
-        input = torch float or complex tensor of size N * 1 * H * W
-
-    returns:
-        output = torch float or complex tensor of size N * 1 * H * W
-    """
-
     return torch.fft.ifftshift(input, dim=(2, 3))
 
 
-def amplitude(input):
+def amplitude(input: Tensor) -> Tensor:
+    """Return the amplitude (modulus) of a complex tensor.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        Complex tensor of shape ``(N, 1, H, W)``.
+
+    Returns
+    -------
+    torch.Tensor
+        Real tensor ``|input|`` of the same shape.
     """
-    get amplitude of complex tensor
-
-    args:
-        input = torch complex tensor of size N * 1 * H * W
-
-    returns:
-        output = torch float tensor of size N * 1 * H * W
-    """
-
     return torch.abs(input)
 
 
-def phase(input):
+def phase(input: Tensor) -> Tensor:
+    """Return the phase factor ``exp(i * angle(input))`` of a complex tensor.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        Complex tensor of shape ``(N, 1, H, W)``.
+
+    Returns
+    -------
+    torch.Tensor
+        Complex tensor of the same shape with unit modulus, and zero where ``input`` is zero.
     """
-    get phase of complex tensor
-
-    args:
-        input = torch complex tensor of size N * 1 * H * W
-
-    returns:
-        output = torch complex tensor of size N * 1 * H * W
-    """
-
     r = torch.abs(input)
     r[r == 0] = 1
     return input / r
 
 
-def sqmesh(height, width):
-    """
-    make squared radius tensor with origin at center
-    integer value given for coordinate
+def sqmesh(height: int, width: int) -> Tensor:
+    """Return the squared distance from the centre on an integer grid.
 
-    args:
-        hight = integer
-        width = integer
+    The origin is at index ``(height // 2, width // 2)``, the zero position used by
+    `fftshift`.
 
-    returns:
-        output = torch float tensor of size 1 * 1 * H * W
+    Parameters
+    ----------
+    height, width : int
+        Size of the grid.
+
+    Returns
+    -------
+    torch.Tensor
+        Real tensor of shape ``(1, 1, height, width)`` in the default floating dtype.
     """
     ci = height // 2
     cj = width // 2
@@ -143,22 +179,30 @@ def sqmesh(height, width):
     return m.view(1, 1, height, width)
 
 
-def freqfilter(size, count):
+def freqfilter(size: int, count: int) -> tuple[float, ...]:
+    """Return the frequency filter sequence of the oversampling smoothness (OSS) method.
+
+    The filter coefficient decreases linearly from ``2 * size`` to ``2 * size / count`` in
+    ``count`` equal stages. The sequence uses the parameter schedule format of
+    `PhaseRetrieval`: ``(ratio_0, value_0, ratio_1, value_1, ...)``, where ``ratio_k`` is the
+    fraction of the iterations after which ``value_k`` applies.
+
+    Parameters
+    ----------
+    size : int
+        Size of the data, ``max(H, W)`` (`PhaseRetrieval` passes ``min(H, W)``).
+    count : int
+        Number of filter stages.
+
+    Returns
+    -------
+    tuple of float
+        Schedule of length ``2 * count``.
+
+    References
+    ----------
+    .. [1] https://doi.org/10.1107/S0021889813002471
     """
-    spatial frequency filter sequence originated from oversampling smoothness method(OSS)
-    output is in form of [ratio, value, ]
-    reference = https://doi.org/10.1107/S0021889813002471
-
-    size should be max(heigh,width) of data
-
-    args:
-        size = integer
-        count = integer
-
-    returns:
-        output = tuple of size 2*count
-    """
-
     param = []
     list = torch.linspace(size * 2, size * 2 / count, steps=count)
     for n, alpha in enumerate(list):
@@ -167,20 +211,28 @@ def freqfilter(size, count):
     return tuple(param)
 
 
-def GaussianSmoothing(input, sigma, mask=None):
+def GaussianSmoothing(input: Tensor, sigma: float, mask: Tensor | None = None) -> Tensor:
+    """Smooth with a Gaussian kernel, ignoring masked-out pixels.
+
+    The kernel size is ``2 * ceil(2 * sigma) + 1``, as in the MATLAB function ``imgaussfilt``.
+    Borders are padded by reflection, and a partial convolution renormalizes the kernel over
+    the valid pixels.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        Real tensor of shape ``(N, 1, H, W)``.
+    sigma : float
+        Standard deviation of the kernel in pixels.
+    mask : torch.Tensor, optional
+        Real tensor of shape ``(N, 1, H, W)``, 1 for valid and 0 for missing pixels. Missing
+        pixels are excluded from the average and set to zero in the output.
+
+    Returns
+    -------
+    torch.Tensor
+        Smoothed real tensor of shape ``(N, 1, H, W)``.
     """
-    Gaussian smoothing supporting mask
-    kernel size is same with MATLAB function imgaussfilt
-
-    args:
-        input = torch float tensor of size N * 1 * H * W
-        sigma = float
-        mask = torch float tensor of size N * 1 * H * W
-
-    returns:
-        output = torch float tensor of size N * 1 * H * W
-    """
-
     ksize = 2 * math.ceil(2 * sigma) + 1
     psize = math.ceil(2 * sigma)
 

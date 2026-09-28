@@ -7,17 +7,38 @@
 ###############################################################################
 # Copied from https://github.com/NVIDIA/partialconv/blob/a99cd7cb9f6469c02181d9aa34fe5abd95fb0154/models/partialconv2d.py
 # Full license text: LICENSES/partialconv-BSD-3-Clause.txt
-# Changes: added __all__; removed unused imports; reformatted with ruff.
+# Changes: added __all__, docstrings and type hints; removed unused imports; reformatted with
+# ruff.
+
+"""Partial convolution layer (https://arxiv.org/abs/1804.07723)."""
 
 __all__ = ["PartialConv2d"]
 
+from typing import Any
+
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import Tensor, nn
 
 
 class PartialConv2d(nn.Conv2d):
-    def __init__(self, *args, **kwargs):
+    """2-D convolution conditioned on a mask of valid pixels.
+
+    The convolution sees only the valid pixels, and its output is rescaled by the fraction
+    of valid pixels under the kernel; output pixels without any valid input are zero (bias
+    included) and invalid in the updated mask.
+
+    Parameters
+    ----------
+    *args, **kwargs
+        Arguments of `torch.nn.Conv2d`, and the keywords below.
+    multi_channel : bool, default False
+        Use a mask per input channel (shape ``(N, C, H, W)``) instead of ``(N or 1, 1, H, W)``.
+    return_mask : bool, default False
+        Also return the updated mask from `forward`.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
 
         # whether the mask is multi-channel or not
         if "multi_channel" in kwargs:
@@ -51,7 +72,26 @@ class PartialConv2d(nn.Conv2d):
         self.update_mask = None
         self.mask_ratio = None
 
-    def forward(self, input, mask_in=None):
+    def forward(
+        self, input: Tensor, mask_in: Tensor | None = None
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        """Apply the partial convolution.
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            Real tensor of shape ``(N, C, H, W)``.
+        mask_in : torch.Tensor, optional
+            Mask of valid pixels (1 valid, 0 invalid) of the shape described in the class
+            docstring. By default, all pixels are valid.
+
+        Returns
+        -------
+        output : torch.Tensor
+            Real tensor of shape ``(N, C_out, H_out, W_out)``.
+        update_mask : torch.Tensor
+            Updated mask, returned only if ``return_mask`` is True.
+        """
         assert len(input.shape) == 4
         if mask_in is not None or self.last_size != tuple(input.shape):
             self.last_size = tuple(input.shape)
