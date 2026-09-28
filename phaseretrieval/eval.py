@@ -28,6 +28,7 @@ def SubpixelAlignment(
     error: np.ndarray | None = None,
     ref: np.ndarray | None = None,
     subpixel: int = 1,
+    copy: bool = True,
 ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Align real-space images by phase cross-correlation with subpixel precision.
 
@@ -38,7 +39,7 @@ def SubpixelAlignment(
     Parameters
     ----------
     input : numpy.ndarray
-        Real array of shape ``(N, H, W)``. If ``error`` is None, it is aligned in place.
+        Real array of shape ``(N, H, W)``; not modified unless ``copy`` is False.
     error : numpy.ndarray, optional
         Real array of shape ``(N,)``. If given, the images are first sorted by increasing
         error.
@@ -46,6 +47,8 @@ def SubpixelAlignment(
         Real reference image of shape ``(H, W)``. By default, the first image (after sorting).
     subpixel : int, default 1
         Upsampling factor of the cross-correlation; the precision is ``1 / subpixel`` pixel.
+    copy : bool, default True
+        If False and ``error`` is None, align ``input`` in place to save memory.
 
     Returns
     -------
@@ -58,33 +61,33 @@ def SubpixelAlignment(
     ----------
     .. [1] https://doi.org/10.1364/OL.33.000156
     """
-    # sort array
+    images = input
     if error is not None:
         order = np.argsort(error)
-        error = error[order]
-        input = input[order, :, :]
+        error = np.asarray(error)[order]
+        images = images[order]  # indexing with an array returns a copy
+    elif copy:
+        images = images.copy()
 
-    # align array to ref, or to the first array (which then stays fixed) if ref is None
+    # align to ref, or to the first image (which then stays fixed) if ref is None
     start = 0
     if ref is None:
-        ref, start = input[0], 1
-    for n in tqdm(range(start, input.shape[0]), desc="subpixel alignment"):
-        arr = input[n]
-        arr_T = np.flip(arr)
-        s, err, _ = phase_cross_correlation(ref, arr, upsample_factor=subpixel)
-        s_T, err_T, _ = phase_cross_correlation(ref, arr_T, upsample_factor=subpixel)
-        if err_T < err:
-            input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr_T), s_T)).real
-        else:
-            input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr), s)).real
+        ref, start = images[0], 1
+    for n in tqdm(range(start, images.shape[0]), desc="subpixel alignment"):
+        image = images[n]
+        twin = np.flip(image)  # 180-degree rotation
+        shift, err, _ = phase_cross_correlation(ref, image, upsample_factor=subpixel)
+        shift_twin, err_twin, _ = phase_cross_correlation(ref, twin, upsample_factor=subpixel)
+        if err_twin < err:
+            image, shift = twin, shift_twin
+        images[n] = np.fft.ifft2(fourier_shift(np.fft.fft2(image), shift)).real
 
-    # remove negative values due to alignment
-    input[input < 0] = 0
+    # remove negative values due to the shift
+    images[images < 0] = 0
 
     if error is not None:
-        return input, error
-    else:
-        return input
+        return images, error
+    return images
 
 
 def PairwiseDistance(input: np.ndarray) -> np.ndarray:
@@ -124,8 +127,7 @@ def PRTF(input: np.ndarray, ref: np.ndarray, mask: np.ndarray | None = None) -> 
     input : numpy.ndarray
         Aligned real-space reconstructions of shape ``(N, H, W)``.
     ref : numpy.ndarray
-        Measured k-space amplitude of shape ``(H, W)``, fftshifted. Modified in place: zeros
-        are replaced by 1.
+        Measured k-space amplitude of shape ``(H, W)``, fftshifted; zeros are treated as 1.
     mask : numpy.ndarray, optional
         Bool array of shape ``(H, W)``, fftshifted: True for missing pixels, which are set to
         zero in the output.
@@ -139,17 +141,12 @@ def PRTF(input: np.ndarray, ref: np.ndarray, mask: np.ndarray | None = None) -> 
     ----------
     .. [1] https://doi.org/10.1364/JOSAA.23.001179
     """
-    # get Fourier transform of input
-    freq = np.fft.fftshift(np.fft.fft2(input))
-    freq = np.absolute(np.mean(freq, axis=0))
-
-    # normalization
-    ref[ref == 0] = 1
-    freq = freq / ref
+    mean_amplitude = np.abs(np.mean(np.fft.fftshift(np.fft.fft2(input), axes=(-2, -1)), axis=0))
+    prtf = mean_amplitude / np.where(ref == 0, 1, ref)
     if mask is not None:
-        freq[mask] = 0
+        prtf[np.asarray(mask, dtype=bool)] = 0
 
-    return freq
+    return prtf
 
 
 def PSD(input: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
