@@ -8,6 +8,7 @@ later implementations are compared against them with :func:`compare`.
 
 Kept compatible with Python 3.7 so it runs in the legacy environment.
 """
+
 import json
 import platform
 import sys
@@ -24,8 +25,9 @@ def capture_error(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except Exception as exc:  # the legacy code is expected to fail in documented cases
         last = traceback.extract_tb(exc.__traceback__)[-1]
-        return "{}{}: {} [{}:{}]".format(ERROR_PREFIX, type(exc).__name__, exc,
-                                         last.filename.split("/")[-1], last.lineno)
+        return "{}{}: {} [{}:{}]".format(
+            ERROR_PREFIX, type(exc).__name__, exc, last.filename.split("/")[-1], last.lineno
+        )
 
 
 def save(path, results, meta):
@@ -34,8 +36,12 @@ def save(path, results, meta):
     other = {k: v for k, v in results.items() if not isinstance(v, np.ndarray)}
     np.savez_compressed(str(path) + ".npz", **arrays)
     with open(str(path) + ".json", "w") as f:
-        json.dump({"meta": meta, "values": other, "arrays": sorted(arrays)}, f, indent=1,
-                  default=_jsonable)
+        json.dump(
+            {"meta": meta, "values": other, "arrays": sorted(arrays)},
+            f,
+            indent=1,
+            default=_jsonable,
+        )
 
 
 def load(path):
@@ -58,7 +64,9 @@ def _jsonable(x):
 
 def rel_l2(a, b):
     """Relative L2 difference ||a - b|| / max(||b||, tiny)."""
-    a = np.asarray(a, dtype=np.complex128 if np.iscomplexobj(a) or np.iscomplexobj(b) else np.float64)
+    a = np.asarray(
+        a, dtype=np.complex128 if np.iscomplexobj(a) or np.iscomplexobj(b) else np.float64
+    )
     b = np.asarray(b, dtype=a.dtype)
     den = np.linalg.norm(b.ravel())
     return float(np.linalg.norm((a - b).ravel()) / (den if den > 0 else 1e-300))
@@ -101,7 +109,11 @@ def compare(ref, new, tol, subset=False):
                 # NaN is a legitimate output (e.g. PSD radii without valid pixels): positions must match
                 r_nan, n_nan = np.isnan(r), np.isnan(n)
                 if np.any(r_nan != n_nan):
-                    failures.append("{}: NaN positions differ ({} vs {})".format(key, int(r_nan.sum()), int(n_nan.sum())))
+                    failures.append(
+                        "{}: NaN positions differ ({} vs {})".format(
+                            key, int(r_nan.sum()), int(n_nan.sum())
+                        )
+                    )
                     continue
                 r, n = r[~r_nan], n[~n_nan]
             err = rel_l2(n, r)

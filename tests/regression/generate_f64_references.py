@@ -8,6 +8,7 @@ of the reference code itself. ``test_regression.py`` uses it to set float32 tole
     conda run -n pr-legacy python tests/regression/generate_f64_references.py \
         --impl pr_legacy --code-root ../_legacy/PhaseRetrieval
 """
+
 import argparse
 import importlib
 import os
@@ -24,7 +25,9 @@ from generate_references import git_describe  # noqa: E402
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--impl", required=True)
     p.add_argument("--code-root", required=True)
     p.add_argument("--cases-module", default="cases_pr")
@@ -45,10 +48,20 @@ def main():
                 noise[k] = harness.rel_l2(np.asarray(ref32[k])[finite], v[finite])
         for k in cases.F64_DROP:
             results.pop(k, None)
-        meta = {"case": name, "adapter": api.name, "code": git_describe(args.code_root), "precision": "float64",
-                "environment": harness.environment(), "f32_reference_rel_error": noise}
+        meta = {
+            "case": name,
+            "adapter": api.name,
+            "code": git_describe(args.code_root),
+            "precision": "float64",
+            "environment": harness.environment(),
+            "f32_reference_rel_error": noise,
+        }
         harness.save(os.path.join(args.out, name), results, meta)
-        print("{:24s} float32 noise: {}".format(name, ", ".join("{}={:.2e}".format(k, v) for k, v in noise.items())))
+        print(
+            "{:24s} float32 noise: {}".format(
+                name, ", ".join("{}={:.2e}".format(k, v) for k, v in noise.items())
+            )
+        )
 
 
 if __name__ == "__main__":

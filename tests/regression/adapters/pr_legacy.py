@@ -12,6 +12,7 @@ weights were saved on ``cuda:0`` and ``Preconditioner`` calls ``torch.load`` wit
 ``map_location``, which fails on CPU-only PyTorch. ``torch.load`` is therefore wrapped to
 default to ``map_location='cpu'``. The algorithm code itself is not modified.
 """
+
 import contextlib
 import os
 import sys
@@ -23,8 +24,10 @@ F64 = os.environ.get("REG_FLOAT64") == "1"
 FDT, CDT = (np.float64, np.complex128) if F64 else (np.float32, np.complex64)
 
 NAME = "pr_legacy"
-NOTES = ["torch.load wrapped to default map_location='cpu' (weights saved on cuda:0)",
-         "torch.set_num_threads(1) for bit-reproducible CPU results"]
+NOTES = [
+    "torch.load wrapped to default map_location='cpu' (weights saved on cuda:0)",
+    "torch.set_num_threads(1) for bit-reproducible CPU results",
+]
 
 
 class Adapter:
@@ -41,7 +44,9 @@ class Adapter:
         _orig_load = torch.load
 
         def _load(f, map_location=None, **kwargs):
-            return _orig_load(f, map_location="cpu" if map_location is None else map_location, **kwargs)
+            return _orig_load(
+                f, map_location="cpu" if map_location is None else map_location, **kwargs
+            )
 
         torch.load = _load
         import PRModule  # noqa: F401  (import after sys.path setup)
@@ -120,13 +125,19 @@ class Adapter:
     # ---- preconditioner.py ---------------------------------------------------------------
     def preconditioner(self, amplitude, unknown, limit, deep=True, toggle=False):
         pre = self.Preconditioner(path=os.path.join(self.root, "PRModule", "param_pretrained.pth"))
-        out = pre.getKernel(self._r2t(amplitude), self._r2t(unknown), limit=limit, deep=deep, toggle=toggle)
+        out = pre.getKernel(
+            self._r2t(amplitude), self._r2t(unknown), limit=limit, deep=deep, toggle=toggle
+        )
         return self._t2r(out)[0]
 
     # ---- phaseretrieval.py ---------------------------------------------------------------
-    def phase_retrieval(self, amplitude, support, unknown, info, iteration, initial_phase, toggle=False):
+    def phase_retrieval(
+        self, amplitude, support, unknown, info, iteration, initial_phase, toggle=False
+    ):
         with self._in_root():
-            it = self.PhaseRetrieval(self._r2t(amplitude), self._r2t(support), self._r2t(unknown), **dict(info))
+            it = self.PhaseRetrieval(
+                self._r2t(amplitude), self._r2t(support), self._r2t(unknown), **dict(info)
+            )
         with torch.no_grad():
             out, path = it(iteration, self._c2t(initial_phase), toggle=toggle, **dict(info))
         out = self._t2c(out) if toggle else self._t2r(out)

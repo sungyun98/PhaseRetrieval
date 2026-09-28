@@ -2,19 +2,29 @@
 # Basic Functions
 #
 # Author: SUNG YUN LEE
-#   
+#
 # Contact: sungyun98@g.postech.edu
 ###############################################################################
 
-__all__ = ['MakeSupport', 'fftshift', 'ifftshift', 'amplitude', 'phase', 'sqmesh', 'freqfilter', 'GaussianSmoothing']
+__all__ = [
+    "MakeSupport",
+    "fftshift",
+    "ifftshift",
+    "amplitude",
+    "phase",
+    "sqmesh",
+    "freqfilter",
+    "GaussianSmoothing",
+]
 
 import math
 import numpy as np
 import torch
 from .partialconv2d import *
 
+
 def MakeSupport(input, **kwargs):
-    '''
+    """
     generate rectangular or autocorrelation-based support
 
     input should be fftshifted intensity data for autocorrelation support
@@ -30,19 +40,19 @@ def MakeSupport(input, **kwargs):
 
     returns:
         output = numpy float ndarray of size H * W
-    '''
+    """
 
     h = input.shape[0]
     w = input.shape[1]
-    type = kwargs.pop('type')
-    if type == 'rect':
+    type = kwargs.pop("type")
+    if type == "rect":
         # generate rectangular support
-        ri, rj = kwargs.pop('radius')
+        ri, rj = kwargs.pop("radius")
         support = np.zeros_like(input)
-        support[h // 2 - ri:h // 2 + ri, w // 2 - rj:w // 2 + rj] = 1
-    elif type == 'auto':
+        support[h // 2 - ri : h // 2 + ri, w // 2 - rj : w // 2 + rj] = 1
+    elif type == "auto":
         # generate autocorrelation support
-        threshold = kwargs.pop('threshold')
+        threshold = kwargs.pop("threshold")
         support = np.abs(np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(input))))
         support = support > np.amax(support) * threshold
     else:
@@ -50,8 +60,9 @@ def MakeSupport(input, **kwargs):
 
     return support
 
+
 def fftshift(input):
-    '''
+    """
     fftshift Fourier transformed r-space data
 
     args:
@@ -59,12 +70,13 @@ def fftshift(input):
 
     returns:
         output = torch float or complex tensor of size N * 1 * H * W
-    '''
+    """
 
-    return torch.fft.fftshift(input, dim = (2, 3))
+    return torch.fft.fftshift(input, dim=(2, 3))
+
 
 def ifftshift(input):
-    '''
+    """
     inverse of fftshift
 
     args:
@@ -72,12 +84,13 @@ def ifftshift(input):
 
     returns:
         output = torch float or complex tensor of size N * 1 * H * W
-    '''
+    """
 
-    return torch.fft.ifftshift(input, dim = (2, 3))
+    return torch.fft.ifftshift(input, dim=(2, 3))
+
 
 def amplitude(input):
-    '''
+    """
     get amplitude of complex tensor
 
     args:
@@ -85,12 +98,13 @@ def amplitude(input):
 
     returns:
         output = torch float tensor of size N * 1 * H * W
-    '''
+    """
 
     return torch.abs(input)
 
+
 def phase(input):
-    '''
+    """
     get phase of complex tensor
 
     args:
@@ -98,14 +112,15 @@ def phase(input):
 
     returns:
         output = torch complex tensor of size N * 1 * H * W
-    '''
+    """
 
     r = torch.abs(input)
     r[r == 0] = 1
     return input / r
 
+
 def sqmesh(height, width):
-    '''
+    """
     make squared radius tensor with origin at center
     integer value given for coordinate
 
@@ -115,18 +130,19 @@ def sqmesh(height, width):
 
     returns:
         output = torch float tensor of size 1 * 1 * H * W
-    '''
+    """
     ci = height // 2
     cj = width // 2
-    li = torch.linspace(-ci, height - ci - 1, steps = height)
-    lj = torch.linspace(-cj, width - cj - 1, steps = width)
-    mi, mj = torch.meshgrid(li, lj, indexing = 'ij')
+    li = torch.linspace(-ci, height - ci - 1, steps=height)
+    lj = torch.linspace(-cj, width - cj - 1, steps=width)
+    mi, mj = torch.meshgrid(li, lj, indexing="ij")
     m = mi.pow(2) + mj.pow(2)
 
     return m.view(1, 1, height, width)
 
+
 def freqfilter(size, count):
-    '''
+    """
     spatial frequency filter sequence originated from oversampling smoothness method(OSS)
     output is in form of [ratio, value, ]
     reference = https://doi.org/10.1107/S0021889813002471
@@ -139,20 +155,21 @@ def freqfilter(size, count):
 
     returns:
         output = tuple of size 2*count
-    '''
+    """
 
     param = []
-    list = torch.linspace(size * 2, size * 2 / count, steps = count)
+    list = torch.linspace(size * 2, size * 2 / count, steps=count)
     for n, alpha in enumerate(list):
         param += [n / count, alpha.item()]
 
     return tuple(param)
 
-def GaussianSmoothing(input, sigma, mask = None):
-    '''
+
+def GaussianSmoothing(input, sigma, mask=None):
+    """
     Gaussian smoothing supporting mask
     kernel size is same with MATLAB function imgaussfilt
-    
+
     args:
         input = torch float tensor of size N * 1 * H * W
         sigma = float
@@ -160,20 +177,20 @@ def GaussianSmoothing(input, sigma, mask = None):
 
     returns:
         output = torch float tensor of size N * 1 * H * W
-    '''
-    
+    """
+
     ksize = 2 * math.ceil(2 * sigma) + 1
     psize = math.ceil(2 * sigma)
-    
+
     kernel = sqmesh(ksize, ksize)
-    kernel = torch.exp(-0.5 * kernel / sigma ** 2)
+    kernel = torch.exp(-0.5 * kernel / sigma**2)
     kernel = kernel / kernel.sum()
-    
-    gfilter = PartialConv2d(1, 1, ksize, padding = psize, padding_mode = 'reflect', bias = False)
+
+    gfilter = PartialConv2d(1, 1, ksize, padding=psize, padding_mode="reflect", bias=False)
     gfilter.weight.data = kernel
     gfilter.weight.requires_grad = False
-    
-    output = gfilter(input, mask_in = mask)
+
+    output = gfilter(input, mask_in=mask)
     if mask is not None:
         output = output * mask
     return output

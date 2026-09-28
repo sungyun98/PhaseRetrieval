@@ -8,6 +8,7 @@ Example (references from the original code, in the legacy environment):
 ``--impl`` selects ``adapters/<impl>.py``; ``--code-root`` is the checkout whose code is
 imported (for references: a worktree at tag v1.0-legacy).
 """
+
 import argparse
 import datetime
 import importlib
@@ -24,17 +25,27 @@ import harness  # noqa: E402
 
 def git_describe(path):
     try:
-        out = subprocess.run(["git", "-C", path, "describe", "--tags", "--always", "--dirty"],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True)
-        sha = subprocess.run(["git", "-C", path, "rev-parse", "HEAD"], stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, universal_newlines=True)
+        out = subprocess.run(
+            ["git", "-C", path, "describe", "--tags", "--always", "--dirty"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            universal_newlines=True,
+        )
+        sha = subprocess.run(
+            ["git", "-C", path, "rev-parse", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            universal_newlines=True,
+        )
         return "{} ({})".format(out.stdout.strip(), sha.stdout.strip())
     except OSError:
         return "unknown"
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--impl", required=True)
     p.add_argument("--code-root", required=True)
     p.add_argument("--out", required=True)
@@ -46,9 +57,13 @@ def main():
     api = adapter_mod.Adapter(args.code_root)
     cases = importlib.import_module(args.cases_module)
     os.makedirs(args.out, exist_ok=True)
-    base_meta = {"adapter": api.name, "adapter_notes": list(getattr(api, "notes", [])),
-                 "code": git_describe(args.code_root), "generated": datetime.datetime.now().isoformat(timespec="seconds"),
-                 "environment": harness.environment()}
+    base_meta = {
+        "adapter": api.name,
+        "adapter_notes": list(getattr(api, "notes", [])),
+        "code": git_describe(args.code_root),
+        "generated": datetime.datetime.now().isoformat(timespec="seconds"),
+        "environment": harness.environment(),
+    }
     for name, case in cases.CASES.items():
         if args.only and name not in args.only:
             continue
@@ -57,8 +72,13 @@ def main():
         meta = dict(base_meta, case=name, seconds=round(time.time() - t0, 2))
         harness.save(os.path.join(args.out, name), results, meta)
         errs = [k for k, v in results.items() if isinstance(v, str)]
-        print("{:28s} {:6.1f} s  {}".format(name, meta["seconds"],
-                                          ", ".join("{}={}".format(k, results[k]) for k in errs) or "ok"))
+        print(
+            "{:28s} {:6.1f} s  {}".format(
+                name,
+                meta["seconds"],
+                ", ".join("{}={}".format(k, results[k]) for k in errs) or "ok",
+            )
+        )
 
 
 if __name__ == "__main__":

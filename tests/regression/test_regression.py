@@ -12,6 +12,7 @@ float32 rounding noise of the reference code itself when that noise was measured
 ``references_f64/<case>.json``). Iterative phase retrieval amplifies rounding differences, so
 float32 results of two correct implementations differ by about that much.
 """
+
 import importlib
 import os
 import sys
@@ -75,4 +76,6 @@ def test_case_float64(api, name):
         pytest.skip("set REG_FLOAT64=1 to run the float64 equivalence check")
     ref, meta = harness.load(os.path.join(REFS_F64, name))
     new = cases.CASES[name](api)
-    check_expected(name, harness.compare(ref, new, {"*": cases.F64_TOLERANCE}, subset=True), api, meta)
+    check_expected(
+        name, harness.compare(ref, new, {"*": cases.F64_TOLERANCE}, subset=True), api, meta
+    )

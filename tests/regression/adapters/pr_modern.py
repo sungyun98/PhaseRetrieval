@@ -3,6 +3,7 @@
 Tensors are ``N x 1 x H x W``; complex values use complex64 tensors. The canonical NumPy
 interface is the same as in ``pr_legacy.py``.
 """
+
 import contextlib
 import os
 import sys
@@ -83,17 +84,29 @@ class Adapter:
 
     def gaussian_smoothing(self, x, sigma, mask=None):
         with torch.no_grad():
-            return self._n(self.func.GaussianSmoothing(self._t(x), sigma, mask=None if mask is None else self._t(mask)))
+            return self._n(
+                self.func.GaussianSmoothing(
+                    self._t(x), sigma, mask=None if mask is None else self._t(mask)
+                )
+            )
 
     # ---- preconditioner.py ---------------------------------------------------------------
     def preconditioner(self, amplitude, unknown, limit, deep=True, toggle=False):
         pre = self.Preconditioner()  # default: weights shipped inside the package
-        return self._n(pre.getKernel(self._t(amplitude), self._t(unknown), limit=limit, deep=deep, toggle=toggle))[0]
+        return self._n(
+            pre.getKernel(
+                self._t(amplitude), self._t(unknown), limit=limit, deep=deep, toggle=toggle
+            )
+        )[0]
 
     # ---- algorithms.py -------------------------------------------------------------------
-    def phase_retrieval(self, amplitude, support, unknown, info, iteration, initial_phase, toggle=False):
+    def phase_retrieval(
+        self, amplitude, support, unknown, info, iteration, initial_phase, toggle=False
+    ):
         with self._in_root():
-            it = self.PhaseRetrieval(self._t(amplitude), self._t(support), self._t(unknown), **dict(info))
+            it = self.PhaseRetrieval(
+                self._t(amplitude), self._t(support), self._t(unknown), **dict(info)
+            )
         with torch.no_grad():
             out, path = it(iteration, self._t(initial_phase, CDT), toggle=toggle, **dict(info))
         return self._n(out), path.numpy()
