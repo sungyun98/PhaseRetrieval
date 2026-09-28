@@ -41,8 +41,8 @@ with `cpu` for a CPU-only installation.
 ## Usage
 
 `demo.ipynb` walks through a complete reconstruction of `sample_lena.mat`, including the
-evaluation (PRTF, pairwise distance, PSD) and multi-GPU use with `torch.nn.DataParallel`. In
-short:
+evaluation (alignment, pairwise distance, PRTF, PSD and eigenmodes) and multi-GPU use with
+`torch.nn.DataParallel`. In short:
 
 ```python
 import numpy as np
@@ -114,11 +114,14 @@ and the network may perform poorly for conditions different from the trained one
     - Deep preconditioned generalized proximal smoothing (dpGPS)
 
 3. Additional functions
+    - Centre of symmetry of a diffraction pattern, and alignment of objects by centroid or by
+      cross-correlation with a target (including the twin image)
     - Subpixel alignment by phase cross-correlation
     - Pairwise distance
     - Phase retrieval transfer function (PRTF)
     - Power spectral density (PSD)
-    - Eigenmodes and low-rank approximations by singular value decomposition (SVD)
+    - Eigenmodes and low-rank approximation of a set of reconstructions by singular value
+      decomposition (SVD)
 
 The references of each method are given in the docstrings.
 
