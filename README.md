@@ -137,8 +137,16 @@ git checkout v1.0-legacy
 `tests/regression/environment-legacy.yml` describes a CPU environment that runs it. The
 regression tests in `tests/regression/` compare the current code with reference outputs of
 `v1.0-legacy` (see `tests/regression/README.md`). All algorithms and functions match within
-floating-point tolerance, except ShrinkWrap, which failed in the original code with a TypeError
-and now works with a centred Gaussian kernel.
+floating-point tolerance, except for three intended changes:
+
+- ShrinkWrap failed in the original code with a TypeError; it now works with a centred Gaussian
+  kernel and restarts from the initial support on every call.
+- PSD measures radii from the zero frequency `(H // 2, W // 2)` instead of half a pixel off for
+  even sizes, which changes PSD and PRTF curves by a few percent.
+- The low-rank approximation of EigenMode approximates the whole set of reconstructions instead
+  of the first one.
+
+Unit tests of the new behaviour are in `tests/unit/` (`python -m pytest tests/unit`).
 
 ## Citation
 

@@ -56,5 +56,6 @@ algorithms are the same independently of float32 rounding.
   legacy adapter makes `torch.load` default to `map_location='cpu'` so it runs on CPU.
 
 Intended changes of results are listed with their reason in `EXPECTED_CHANGES`
-(`cases_pr.py`); for implementations other than the one that produced the references, such
-cases are reported as expected failures.
+(`cases_pr.py`), for a whole case or for some of its result keys (the other keys must still
+match); for implementations other than the one that produced the references, such cases are
+reported as expected failures.
