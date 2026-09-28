@@ -1,11 +1,11 @@
-"""Unit tests of find_center and align_object."""
+"""Unit tests of SymmOffset and AlignObject."""
 
 import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
 
-from phaseretrieval import align_object, find_center
+from phaseretrieval import AlignObject, SymmOffset
 
 
 def _align_obj_v1(output, target, limit=32):
@@ -54,10 +54,10 @@ def test_matches_original_for_64x64():
     shifted[1::2] = torch.rot90(shifted[1::2], 2, dims=(-2, -1))
     shifted += 0.01 * torch.rand(shifted.shape, generator=torch.Generator().manual_seed(3))
     expected = _align_obj_v1(shifted.clone(), target)
-    assert torch.equal(align_object(shifted, target), expected)
+    assert torch.equal(AlignObject(shifted, target), expected)
     for i in range(6):
         one = shifted[i : i + 1]
-        assert torch.equal(align_object(one), _align_obj_cen_v1(one.clone()))
+        assert torch.equal(AlignObject(one), _align_obj_cen_v1(one.clone()))
 
 
 @pytest.mark.parametrize("shape", [(48, 80), (33, 33), (128, 96)])
@@ -67,7 +67,7 @@ def test_recovers_shift_and_twin_for_any_size(shape):
     moved = torch.roll(target, (h // 5, -w // 6), dims=(-2, -1))
     moved[2:] = torch.rot90(moved[2:], 2, dims=(-2, -1))
     before = moved.clone()
-    aligned = align_object(moved, target)
+    aligned = AlignObject(moved, target)
     assert torch.equal(moved, before)  # input not modified
     for i in range(4):
         corr_max = F.conv2d(aligned[i : i + 1], target[i : i + 1], padding=max(h, w) // 2).amax()
@@ -77,7 +77,7 @@ def test_recovers_shift_and_twin_for_any_size(shape):
 def test_centres_each_object_separately():
     obj = _objects(3, 40, 56)
     obj = torch.stack([torch.roll(o, (3 * k, -4 * k), dims=(-2, -1)) for k, o in enumerate(obj)])
-    for o in align_object(obj):
+    for o in AlignObject(obj):
         pixels = torch.nonzero(o[0] > o.max() * 0.01).float().mean(dim=0)
         assert torch.all(torch.abs(pixels - torch.tensor([20.0, 28.0])) < 1)
 
@@ -85,7 +85,7 @@ def test_centres_each_object_separately():
 def test_gradient_flows_through_alignment():
     target = _objects(2, 32, 32)
     x = torch.roll(target, (3, 2), dims=(-2, -1)).requires_grad_()
-    align_object(x, target).sum().backward()
+    AlignObject(x, target).sum().backward()
     assert torch.equal(x.grad, torch.ones_like(x))
 
 
@@ -104,13 +104,13 @@ def _find_center_v1(input):
     return np.trunc(shift / 2).astype(int)
 
 
-def test_find_center():
+def test_symm_offset():
     rs = np.random.RandomState(0)
     half = rs.rand(41, 51)
     pattern = half + np.rot90(half, 2)  # centrosymmetric about its centre (20, 25)
-    assert np.array_equal(find_center(pattern), [0, 0])
+    assert np.array_equal(SymmOffset(pattern), [0, 0])
     # centre at (26, 25) of a 47 x 59 array, i.e. offset (3, -4) from (47 // 2, 59 // 2)
     pattern = np.pad(pattern, ((6, 0), (0, 8)))
     pattern[-3:, :4] = np.nan
-    assert np.array_equal(find_center(pattern), [3, -4])
-    assert np.array_equal(find_center(pattern), _find_center_v1(pattern))
+    assert np.array_equal(SymmOffset(pattern), [3, -4])
+    assert np.array_equal(SymmOffset(pattern), _find_center_v1(pattern))

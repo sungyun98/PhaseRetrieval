@@ -8,7 +8,7 @@
 
 """Evaluation of phase retrieval results: alignment, distances, PRTF, PSD and SVD modes.
 
-These functions work on NumPy arrays, except `align_object`, which works on PyTorch tensors
+These functions work on NumPy arrays, except `AlignObject`, which works on PyTorch tensors
 (also inside training, with autograd). Real-space results have the layout ``(N, H, W)``;
 k-space data are fftshifted (zero frequency at the centre).
 """
@@ -19,8 +19,8 @@ __all__ = [
     "PRTF",
     "PSD",
     "EigenMode",
-    "find_center",
-    "align_object",
+    "SymmOffset",
+    "AlignObject",
 ]
 
 import itertools
@@ -241,7 +241,7 @@ def EigenMode(
     return modes[:k], s[:k], approx
 
 
-def find_center(input: np.ndarray) -> np.ndarray:
+def SymmOffset(input: np.ndarray) -> np.ndarray:
     """Find the centre of symmetry of a diffraction pattern.
 
     The pattern is registered with its 180-degree rotation by phase cross-correlation,
@@ -270,7 +270,7 @@ def find_center(input: np.ndarray) -> np.ndarray:
     return np.trunc(shift / 2).astype(int)
 
 
-def align_object(input: Tensor, target: Tensor | None = None) -> Tensor:
+def AlignObject(input: Tensor, target: Tensor | None = None) -> Tensor:
     """Align real-space objects by circular shifts.
 
     Without a target, each object is shifted so that the centroid of its pixels above 1% of

@@ -9,11 +9,11 @@ from .algorithms import PhaseRetrieval
 from .eval import (
     PRTF,
     PSD,
+    AlignObject,
     EigenMode,
     PairwiseDistance,
     SubpixelAlignment,
-    align_object,
-    find_center,
+    SymmOffset,
 )
 from .func import (
     GaussianSmoothing,
@@ -33,8 +33,8 @@ __all__ = [
     "PRTF",
     "PSD",
     "EigenMode",
-    "find_center",
-    "align_object",
+    "SymmOffset",
+    "AlignObject",
     "MakeSupport",
     "fftshift",
     "ifftshift",
