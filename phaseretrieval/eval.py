@@ -8,18 +8,30 @@
 
 """Evaluation of phase retrieval results: alignment, distances, PRTF, PSD and SVD modes.
 
-These functions work on NumPy arrays. Real-space results have the layout ``(N, H, W)``;
+These functions work on NumPy arrays, except `align_object`, which works on PyTorch tensors
+(also inside training, with autograd). Real-space results have the layout ``(N, H, W)``;
 k-space data are fftshifted (zero frequency at the centre).
 """
 
-__all__ = ["SubpixelAlignment", "PairwiseDistance", "PRTF", "PSD", "EigenMode"]
+__all__ = [
+    "SubpixelAlignment",
+    "PairwiseDistance",
+    "PRTF",
+    "PSD",
+    "EigenMode",
+    "find_center",
+    "align_object",
+]
 
 import itertools
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 from numpy.linalg import svd
 from scipy.ndimage import fourier_shift
 from skimage.registration import phase_cross_correlation
+from torch import Tensor
 from tqdm import tqdm
 
 
@@ -227,3 +239,85 @@ def EigenMode(
     weights = s[:k] * vh[:k].mean(axis=1)
     approx = np.cumsum(u[:, :k] * weights, axis=1).T.reshape(k, h, w)
     return modes[:k], s[:k], approx
+
+
+def find_center(input: np.ndarray) -> np.ndarray:
+    """Find the centre of symmetry of a diffraction pattern.
+
+    The pattern is registered with its 180-degree rotation by phase cross-correlation,
+    ignoring missing (NaN) pixels; half the shift is the offset of the centre.
+
+    Parameters
+    ----------
+    input : numpy.ndarray
+        Intensity of shape ``(H, W)``, NaN for missing pixels.
+
+    Returns
+    -------
+    numpy.ndarray
+        Integer offset ``(di, dj)`` of the centre of symmetry from index ``(H // 2, W // 2)``,
+        truncated toward zero.
+    """
+    rotated = np.rot90(input, 2)
+    result = phase_cross_correlation(
+        input,
+        rotated,
+        reference_mask=~np.isnan(input),
+        moving_mask=~np.isnan(rotated),
+        upsample_factor=1,
+    )
+    shift = result[0] if isinstance(result, tuple) else result  # scikit-image < 0.22: shift only
+    return np.trunc(shift / 2).astype(int)
+
+
+def align_object(input: Tensor, target: Tensor | None = None) -> Tensor:
+    """Align real-space objects by circular shifts.
+
+    Without a target, each object is shifted so that the centroid of its pixels above 1% of
+    its maximum is at index ``(H // 2, W // 2)``. With a target, each object, or its
+    180-degree rotation (twin image) if that correlates better, is shifted by the
+    translation of at most ``max(H, W) // 2`` pixels per axis that maximizes the
+    cross-correlation with its target; among equal maxima, the smallest shift is used.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        Real objects of shape ``(N, 1, H, W)``. Not modified; gradients flow through the
+        shifts.
+    target : torch.Tensor, optional
+        Real targets of shape ``(N or 1, 1, H, W)``.
+
+    Returns
+    -------
+    torch.Tensor
+        Aligned objects of shape ``(N, 1, H, W)``.
+    """
+    n, _, h, w = input.shape
+    aligned = []
+    if target is None:
+        for obj in input:
+            pixels = torch.nonzero(obj > obj.max() * 0.01).to(torch.float32)
+            centroid = torch.mean(pixels, dim=0)[-2:].to(torch.int64)
+            shift = [h // 2 - int(centroid[0]), w // 2 - int(centroid[1])]
+            aligned.append(torch.roll(obj, shift, dims=(-2, -1)))
+        return torch.stack(aligned)
+
+    limit = max(h, w) // 2
+    rotated = torch.rot90(input, 2, dims=(-2, -1))
+    with torch.no_grad():
+        weight = target.expand(n, 1, h, w).contiguous()
+        corr = F.conv2d(input.reshape(1, n, h, w), weight, padding=limit, groups=n)[0]
+        corr_rot = F.conv2d(rotated.reshape(1, n, h, w), weight, padding=limit, groups=n)[0]
+    for i in range(n):
+        use_rot = corr_rot[i].amax() > corr[i].amax()
+        c = corr_rot[i] if use_rot else corr[i]
+        peaks = torch.nonzero(c == c.amax())
+        if len(peaks) == 0:  # no exact maximum (NaN values)
+            k = torch.argmax(c)
+            peaks = torch.stack([k // c.shape[-1], k % c.shape[-1]])[None]
+        shifts = limit - peaks
+        shift = shifts[torch.argmin(torch.sum(torch.abs(shifts), dim=-1))]
+        aligned.append(
+            torch.roll(rotated[i] if use_rot else input[i], shift.tolist(), dims=(-2, -1))
+        )
+    return torch.stack(aligned)
