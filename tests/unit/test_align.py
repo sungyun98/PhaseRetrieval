@@ -2,10 +2,13 @@
 
 import numpy as np
 import pytest
+import skimage
 import torch
 import torch.nn.functional as F
 
 from phaseretrieval import AlignObject, SymmOffset
+
+_SKIMAGE_022 = tuple(int(v) for v in skimage.__version__.split(".")[:2]) >= (0, 22)
 
 
 def _align_obj_v1(output, target, limit=32):
@@ -113,4 +116,28 @@ def test_symm_offset():
     pattern = np.pad(pattern, ((6, 0), (0, 8)))
     pattern[-3:, :4] = np.nan
     assert np.array_equal(SymmOffset(pattern), [3, -4])
-    assert np.array_equal(SymmOffset(pattern), _find_center_v1(pattern))
+    if _SKIMAGE_022:  # the DPR function needs scikit-image >= 0.22
+        assert np.array_equal(SymmOffset(pattern), _find_center_v1(pattern))  # same for odd sizes
+
+
+def _symmetric(shape, centre, seed=0):
+    """Pattern of the given shape symmetric about centre (NaN where the mirror is outside)."""
+    rs = np.random.RandomState(seed)
+    base = rs.rand(*shape)
+    ii, jj = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), indexing="ij")
+    mi, mj = np.rint(2 * centre[0] - ii).astype(int), np.rint(2 * centre[1] - jj).astype(int)
+    inside = (mi >= 0) & (mi < shape[0]) & (mj >= 0) & (mj < shape[1])
+    pattern = np.full(shape, np.nan)
+    pattern[inside] = base[inside] + base[mi[inside], mj[inside]]
+    return pattern
+
+
+@pytest.mark.parametrize("shape", [(61, 61), (64, 64), (64, 61)])
+@pytest.mark.parametrize("offset", [(-5, 3), (4, -2), (0, 0), (-1, 1)])
+def test_symm_offset_odd_and_even_sizes(shape, offset):
+    centre = (shape[0] // 2 + offset[0], shape[1] // 2 + offset[1])
+    assert np.array_equal(SymmOffset(_symmetric(shape, centre)), offset)
+    # halfway between pixels: rounded toward zero
+    half = (centre[0] + 0.5, centre[1] - 0.5)
+    expected = np.trunc(np.subtract(half, (shape[0] // 2, shape[1] // 2))).astype(int)
+    assert np.array_equal(SymmOffset(_symmetric(shape, half)), expected)

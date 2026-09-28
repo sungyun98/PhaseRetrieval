@@ -242,23 +242,34 @@ def EigenMode(
 
 
 def SymmOffset(input: np.ndarray) -> np.ndarray:
-    """Find the centre of symmetry of a diffraction pattern.
+    """Find the offset of the centre of symmetry of a diffraction pattern from the array centre.
 
-    The pattern is registered with its 180-degree rotation by phase cross-correlation,
-    ignoring missing (NaN) pixels; half the shift is the offset of the centre.
+    The diffraction intensity of a real object is centrosymmetric about the zero frequency,
+    ``I(q) = I(-q)`` (Friedel's law), so the zero frequency of a measured pattern is its centre
+    of symmetry ``c``. Rotating the pattern by 180 degrees about a point ``p`` moves ``c`` to
+    ``2 p - c``; the shift ``s = 2 (c - p)`` that registers the rotated pattern with the
+    original therefore gives ``c = p + s / 2``. The shift is found with pixel precision by
+    phase cross-correlation, ignoring missing (NaN) pixels.
+
+    The offset is measured from index ``(H // 2, W // 2)``, the position of the zero
+    frequency after `numpy.fft.fftshift`, for both odd and even sizes: the pattern is centred
+    when the offset is zero, and a region centred on the zero frequency is obtained by cropping
+    around ``(H // 2 + di, W // 2 + dj)``.
 
     Parameters
     ----------
     input : numpy.ndarray
-        Intensity of shape ``(H, W)``, NaN for missing pixels.
+        Intensity of shape ``(H, W)``, NaN for missing pixels. The centre of symmetry must lie
+        inside the array, and enough of the pattern must overlap with its rotation.
 
     Returns
     -------
     numpy.ndarray
-        Integer offset ``(di, dj)`` of the centre of symmetry from index ``(H // 2, W // 2)``,
-        truncated toward zero.
+        Integer offset ``(di, dj)``: the centre of symmetry is at ``(H // 2 + di, W // 2 + dj)``.
+        A centre halfway between two pixels (half-integer offset) is rounded toward zero, i.e.
+        toward the array centre.
     """
-    rotated = np.rot90(input, 2)
+    rotated = np.rot90(input, 2)  # 180-degree rotation about p = ((H - 1) / 2, (W - 1) / 2)
     result = phase_cross_correlation(
         input,
         rotated,
@@ -267,7 +278,10 @@ def SymmOffset(input: np.ndarray) -> np.ndarray:
         upsample_factor=1,
     )
     shift = result[0] if isinstance(result, tuple) else result  # scikit-image < 0.22: shift only
-    return np.trunc(shift / 2).astype(int)
+    # c - (H // 2, W // 2) = s / 2 + p - (H // 2, W // 2), where p - (H // 2, W // 2) is -1/2 for
+    # even and 0 for odd sizes
+    parity = 1 - np.asarray(input.shape) % 2
+    return np.trunc((shift - parity) / 2).astype(int)
 
 
 def AlignObject(input: Tensor, target: Tensor | None = None) -> Tensor:
