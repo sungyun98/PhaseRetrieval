@@ -10,10 +10,9 @@ from the legacy references, with the reason.
 import os
 
 import numpy as np
+from harness import capture_error
 from scipy.io import loadmat
 from scipy.ndimage import fourier_shift
-
-from harness import capture_error
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 N_SEED = 2
@@ -277,7 +276,7 @@ for _fn in [
 for _name in PR_CONFIGS:
     CASES["pr_" + _name] = make_pr_case(_name, False)
 for _name in TOGGLE_CASES:
-    CASES["pr_{}_z".format(_name)] = make_pr_case(_name, True)
+    CASES[f"pr_{_name}_z"] = make_pr_case(_name, True)
 for _fn in [case_eval_subpixel_alignment, case_eval_metrics, case_eval_eigenmode]:
     CASES[_fn.__name__[5:]] = _fn
 

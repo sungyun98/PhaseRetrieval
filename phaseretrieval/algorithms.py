@@ -9,14 +9,14 @@
 __all__ = ["PhaseRetrieval"]
 
 import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.fft import fft2, ifft2
 
-from .func import *
-from .preconditioner import *
-from .partialconv2d import *
+from .func import GaussianSmoothing, fftshift, freqfilter, ifftshift, phase, sqmesh
+from .preconditioner import Preconditioner
 
 
 class GaussianFilter(nn.Module):
@@ -283,7 +283,7 @@ class PhaseRetrievalUnit(nn.Module):
         """
 
         if not conj:
-            raise Exception(
+            raise ValueError(
                 "Proximal operator on support constraint only supports convex conjugation version."
             )
 
@@ -410,7 +410,7 @@ class PhaseRetrievalUnit(nn.Module):
             return zn, y
 
         else:
-            raise ValueError("{} is not supported for phase retrieval.".format(self.type))
+            raise ValueError(f"{self.type} is not supported for phase retrieval.")
 
 
 class PhaseRetrieval(nn.Module):
@@ -530,7 +530,7 @@ class PhaseRetrieval(nn.Module):
             step = [0]
             plist = [input]
         else:
-            raise ValueError("{} is invalid value for {}.".format(input, name))
+            raise ValueError(f"{input} is invalid value for {name}.")
         return step, plist
 
     def getAmplitude(self, toggle=False, **kwargs):
@@ -585,7 +585,7 @@ class PhaseRetrieval(nn.Module):
             NLL = NLL * valid
             return NLL.sum(dim=(1, 2, 3)) / valid.sum()
         else:
-            raise ValueError("{} is not supported for error metric.".format(self.error))
+            raise ValueError(f"{self.error} is not supported for error metric.")
 
     def forward(self, iteration, initial_phase, toggle=False, **kwargs):
         """
@@ -654,9 +654,7 @@ class PhaseRetrieval(nn.Module):
                                 beta_list[0] + (self.beta_lim - beta_list[0]) / iteration * n
                             )
                         else:
-                            raise ValueError(
-                                "{} is not supported for beta control.".format(self.beta_type)
-                            )
+                            raise ValueError(f"{self.beta_type} is not supported for beta control.")
                 else:
                     var["toggle"] = True
                     var["beta"] = 1 - (n - bp_step) / (iteration - bp_step)
@@ -665,7 +663,6 @@ class PhaseRetrieval(nn.Module):
                 # refresh when parameter updated
                 if refresh:
                     var["u"] = u_best.clone().detach()
-                    refresh = False
                 # perform single phase retrieval step
                 var["u"] = self.block(**var)
                 # calculate error
@@ -714,7 +711,6 @@ class PhaseRetrieval(nn.Module):
                 if refresh:
                     var["z"] = z_best.clone().detach()
                     var["y"] = y_best.clone().detach()
-                    refresh = False
                 # perform single phase retrieval step
                 var["z"], var["y"] = self.block(**var)
                 # calculate error
@@ -727,7 +723,7 @@ class PhaseRetrieval(nn.Module):
                 y_best[trigger, :, :, :] = var["y"][trigger, :, :, :]
 
             else:
-                raise ValueError("{} is not supported for phase retrieval.".format(self.algorithm))
+                raise ValueError(f"{self.algorithm} is not supported for phase retrieval.")
 
             # shrinkwrap
             if self.shrinkwrap:
@@ -735,10 +731,8 @@ class PhaseRetrieval(nn.Module):
                     # get object
                     if z_best is not None:
                         obj = self.getAmplitude(z=z_best, toggle=True)
-                    elif u_best is not None:
-                        obj = self.getAmplitude(u=u_best, toggle=True)
                     else:
-                        raise Exception
+                        obj = self.getAmplitude(u=u_best, toggle=True)
                     # update support
                     self.support = self.shrink(obj)
                     self.block.updateSupport(self.support)
@@ -756,6 +750,6 @@ class PhaseRetrieval(nn.Module):
             else:
                 output = self.getAmplitude(u=u_best, toggle=True)
         else:
-            raise Exception
+            raise ValueError("iteration must be at least 1.")
 
         return output, path

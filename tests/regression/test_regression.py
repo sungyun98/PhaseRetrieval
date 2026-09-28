@@ -3,7 +3,8 @@
     # float32 (default): compare with references/
     REG_IMPL=pr_modern REG_CODE_ROOT=. conda run -n <env> python -m pytest tests/regression -q
     # float64: compare with references_f64/ (strict equivalence check of the algorithms)
-    REG_FLOAT64=1 REG_IMPL=pr_modern REG_CODE_ROOT=. conda run -n <env> python -m pytest tests/regression -q
+    REG_FLOAT64=1 REG_IMPL=pr_modern REG_CODE_ROOT=. \
+        conda run -n <env> python -m pytest tests/regression -q
 
 ``REG_IMPL`` selects ``adapters/<impl>.py`` and ``REG_CODE_ROOT`` the checkout to import.
 
@@ -52,12 +53,13 @@ def float32_tolerance(name):
 
 
 def check_expected(name, failures, api, ref_meta):
-    # EXPECTED_CHANGES apply to later implementations; the reference implementation must reproduce itself
+    # EXPECTED_CHANGES apply to later implementations; the reference implementation must
+    # reproduce itself
     if name in cases.EXPECTED_CHANGES and ref_meta.get("adapter") != api.name:
         reason = cases.EXPECTED_CHANGES[name]
         if failures:
             pytest.xfail("expected change ({}): {}".format(reason, "; ".join(failures)))
-        pytest.fail("marked as expected change ({}) but matches the reference".format(reason))
+        pytest.fail(f"marked as expected change ({reason}) but matches the reference")
     assert not failures, "\n".join(failures)
 
 

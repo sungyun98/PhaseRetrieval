@@ -29,15 +29,15 @@ def git_describe(path):
             ["git", "-C", path, "describe", "--tags", "--always", "--dirty"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            universal_newlines=True,
+            text=True,
         )
         sha = subprocess.run(
             ["git", "-C", path, "rev-parse", "HEAD"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            universal_newlines=True,
+            text=True,
         )
-        return "{} ({})".format(out.stdout.strip(), sha.stdout.strip())
+        return f"{out.stdout.strip()} ({sha.stdout.strip()})"
     except OSError:
         return "unknown"
 
@@ -76,7 +76,7 @@ def main():
             "{:28s} {:6.1f} s  {}".format(
                 name,
                 meta["seconds"],
-                ", ".join("{}={}".format(k, results[k]) for k in errs) or "ok",
+                ", ".join(f"{k}={results[k]}" for k in errs) or "ok",
             )
         )
 

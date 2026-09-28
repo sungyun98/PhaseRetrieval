@@ -7,14 +7,13 @@
 ###############################################################################
 # Copied from https://github.com/NVIDIA/partialconv/blob/a99cd7cb9f6469c02181d9aa34fe5abd95fb0154/models/partialconv2d.py
 # Full license text: LICENSES/partialconv-BSD-3-Clause.txt
-# Changes: added __all__; reformatted with ruff.
+# Changes: added __all__; removed unused imports; reformatted with ruff.
 
 __all__ = ["PartialConv2d"]
 
 import torch
 import torch.nn.functional as F
-from torch import nn, cuda
-from torch.autograd import Variable
+from torch import nn
 
 
 class PartialConv2d(nn.Conv2d):
@@ -33,7 +32,7 @@ class PartialConv2d(nn.Conv2d):
         else:
             self.return_mask = False
 
-        super(PartialConv2d, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         if self.multi_channel:
             self.weight_maskUpdater = torch.ones(
@@ -91,9 +90,7 @@ class PartialConv2d(nn.Conv2d):
                 self.update_mask = torch.clamp(self.update_mask, 0, 1)
                 self.mask_ratio = torch.mul(self.mask_ratio, self.update_mask)
 
-        raw_out = super(PartialConv2d, self).forward(
-            torch.mul(input, mask) if mask_in is not None else input
-        )
+        raw_out = super().forward(torch.mul(input, mask) if mask_in is not None else input)
 
         if self.bias is not None:
             bias_view = self.bias.view(1, self.out_channels, 1, 1)

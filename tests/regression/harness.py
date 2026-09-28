@@ -82,50 +82,49 @@ def compare(ref, new, tol, subset=False):
     failures = []
     for key in sorted(set(ref) if subset else set(ref) | set(new)):
         if key not in new:
-            failures.append("{}: missing in new results".format(key))
+            failures.append(f"{key}: missing in new results")
             continue
         if key not in ref:
-            failures.append("{}: not in reference".format(key))
+            failures.append(f"{key}: not in reference")
             continue
         r, n = ref[key], new[key]
         r_err = isinstance(r, str) and r.startswith(ERROR_PREFIX)
         n_err = isinstance(n, str) and n.startswith(ERROR_PREFIX)
         if r_err or n_err:
             if not (r_err and n_err and r.split(":")[1] == n.split(":")[1]):
-                failures.append("{}: reference {!r} vs new {!r}".format(key, r, n))
+                failures.append(f"{key}: reference {r!r} vs new {n!r}")
             continue
         if isinstance(r, np.ndarray) or isinstance(n, np.ndarray):
             r, n = np.asarray(r), np.asarray(n)
             if r.shape != n.shape:
-                failures.append("{}: shape {} vs {}".format(key, r.shape, n.shape))
+                failures.append(f"{key}: shape {r.shape} vs {n.shape}")
                 continue
             if r.dtype == bool or n.dtype == bool:
                 bad = int(np.sum(r != n))
                 if bad:
-                    failures.append("{}: {} boolean elements differ".format(key, bad))
+                    failures.append(f"{key}: {bad} boolean elements differ")
                 continue
             limit = tol.get(key, tol.get("*", 0.0))
             if r.dtype.kind in "fc" or n.dtype.kind in "fc":
-                # NaN is a legitimate output (e.g. PSD radii without valid pixels): positions must match
+                # NaN is a legitimate output (e.g. PSD radii without valid pixels): positions
+                # must match
                 r_nan, n_nan = np.isnan(r), np.isnan(n)
                 if np.any(r_nan != n_nan):
                     failures.append(
-                        "{}: NaN positions differ ({} vs {})".format(
-                            key, int(r_nan.sum()), int(n_nan.sum())
-                        )
+                        f"{key}: NaN positions differ ({int(r_nan.sum())} vs {int(n_nan.sum())})"
                     )
                     continue
                 r, n = r[~r_nan], n[~n_nan]
             err = rel_l2(n, r)
             if not err <= limit:
-                failures.append("{}: rel L2 diff {:.3e} > {:.1e}".format(key, err, limit))
+                failures.append(f"{key}: rel L2 diff {err:.3e} > {limit:.1e}")
         else:
             if isinstance(r, float) or isinstance(n, float):
                 limit = tol.get(key, tol.get("*", 0.0))
                 if not abs(float(n) - float(r)) <= limit * max(abs(float(r)), 1e-300):
-                    failures.append("{}: {!r} vs {!r}".format(key, r, n))
+                    failures.append(f"{key}: {r!r} vs {n!r}")
             elif _norm(r) != _norm(n):
-                failures.append("{}: {!r} vs {!r}".format(key, r, n))
+                failures.append(f"{key}: {r!r} vs {n!r}")
     return failures
 
 

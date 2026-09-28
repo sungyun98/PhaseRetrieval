@@ -15,8 +15,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .func import *
-from .partialconv2d import *
+from .func import fftshift, ifftshift
+from .partialconv2d import PartialConv2d
 
 
 class DenoisingNetwork(nn.Module):
@@ -188,8 +188,6 @@ class Preconditioner:
             cnum = integer (default = 16)
             path = string (default = None, the param_pretrained.pth file shipped with the package)
         """
-        super().__init__()
-
         self.net = DenoisingNetwork(cnum=cnum).eval()
         if path is None:
             with resources.as_file(

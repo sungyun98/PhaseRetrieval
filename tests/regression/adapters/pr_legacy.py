@@ -52,8 +52,8 @@ class Adapter:
         import PRModule  # noqa: F401  (import after sys.path setup)
         from PRModule import eval as pr_eval
         from PRModule import func
-        from PRModule.preconditioner import Preconditioner
         from PRModule.phaseretrieval import PhaseRetrieval
+        from PRModule.preconditioner import Preconditioner
 
         self.func, self.eval = func, pr_eval
         self.Preconditioner, self.PhaseRetrieval = Preconditioner, PhaseRetrieval

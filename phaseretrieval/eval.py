@@ -9,11 +9,12 @@
 __all__ = ["SubpixelAlignment", "PairwiseDistance", "PRTF", "PSD", "EigenMode"]
 
 import itertools
-from tqdm import tqdm
+
 import numpy as np
 from numpy.linalg import svd
 from scipy.ndimage import fourier_shift
 from skimage.registration import phase_cross_correlation
+from tqdm import tqdm
 
 
 def SubpixelAlignment(input, error=None, ref=None, subpixel=1):
@@ -40,30 +41,19 @@ def SubpixelAlignment(input, error=None, ref=None, subpixel=1):
         error = error[order]
         input = input[order, :, :]
 
-    # align array
+    # align array to ref, or to the first array (which then stays fixed) if ref is None
+    start = 0
     if ref is None:
-        n_max = input.shape[0]
-        for n in tqdm(range(1, n_max), desc="subpixel alignment"):
-            arr = input[n]
-            arr_T = np.flip(arr)
-            s, err, _ = phase_cross_correlation(input[0], arr, upsample_factor=subpixel)
-            s_T, err_T, _ = phase_cross_correlation(input[0], arr_T, upsample_factor=subpixel)
-            if err_T < err:
-                input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr_T), s_T)).real
-            else:
-                input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr), s)).real
-
-    else:
-        n_max = input.shape[0]
-        for n in tqdm(range(0, n_max), desc="subpixel alignment"):
-            arr = input[n]
-            arr_T = np.flip(arr)
-            s, err, _ = phase_cross_correlation(ref, arr, upsample_factor=subpixel)
-            s_T, err_T, _ = phase_cross_correlation(ref, arr_T, upsample_factor=subpixel)
-            if err_T < err:
-                input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr_T), s_T)).real
-            else:
-                input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr), s)).real
+        ref, start = input[0], 1
+    for n in tqdm(range(start, input.shape[0]), desc="subpixel alignment"):
+        arr = input[n]
+        arr_T = np.flip(arr)
+        s, err, _ = phase_cross_correlation(ref, arr, upsample_factor=subpixel)
+        s_T, err_T, _ = phase_cross_correlation(ref, arr_T, upsample_factor=subpixel)
+        if err_T < err:
+            input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr_T), s_T)).real
+        else:
+            input[n, :, :] = np.fft.ifft2(fourier_shift(np.fft.fft2(arr), s)).real
 
     # remove negative values due to alignment
     input[input < 0] = 0
@@ -202,8 +192,8 @@ def EigenMode(input, k=None, lowrank=True):
         else:
             # calculate low-rank approximation with order 1 to k
             approx = np.zeros((k, h, w))
-            for l in range(1, k + 1):
-                temp = u[:, :l] @ np.diag(s[:l]) @ vh[:l, :]
+            for rank in range(1, k + 1):
+                temp = u[:, :rank] @ np.diag(s[:rank]) @ vh[:rank, :]
                 temp = temp[:, 0].reshape((h, w))
-                approx[l - 1, :, :] = temp
+                approx[rank - 1, :, :] = temp
             return output[:k], s[:k], approx

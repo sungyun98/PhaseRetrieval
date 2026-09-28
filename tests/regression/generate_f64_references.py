@@ -18,9 +18,8 @@ os.environ["REG_FLOAT64"] = "1"  # must be set before an adapter is imported
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-import numpy as np  # noqa: E402
-
 import harness  # noqa: E402
+import numpy as np  # noqa: E402
 from generate_references import git_describe  # noqa: E402
 
 
@@ -59,7 +58,7 @@ def main():
         harness.save(os.path.join(args.out, name), results, meta)
         print(
             "{:24s} float32 noise: {}".format(
-                name, ", ".join("{}={:.2e}".format(k, v) for k, v in noise.items())
+                name, ", ".join(f"{k}={v:.2e}" for k, v in noise.items())
             )
         )
 

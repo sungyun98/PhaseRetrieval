@@ -18,9 +18,11 @@ __all__ = [
 ]
 
 import math
+
 import numpy as np
 import torch
-from .partialconv2d import *
+
+from .partialconv2d import PartialConv2d
 
 
 def MakeSupport(input, **kwargs):
