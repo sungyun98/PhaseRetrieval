@@ -1,10 +1,17 @@
 # Phase Retrieval Module
 
+> **Package renamed:** `PRModule` is now `phaseretrieval`, and `PRModule/phaseretrieval.py` is now
+> `phaseretrieval/algorithms.py`. The folders had to be renamed to merge the phase retrieval code
+> shared by this repository and [DPR](https://github.com/sungyun98/DPR) into one package. We
+> apologize for the inconvenience to existing users: please replace `from PRModule import ...`
+> with `from phaseretrieval import ...`. The original code remains available at the tag
+> `v1.0-legacy`.
+
 Phase retrieval module based on Python 3.7.4 and PyTorch 1.6.0 with CUDA 10.2
 
 Multi-GPU calculation supported by torch.nn.DataParallel wrapper
 
-pretrained parameters for PRModule.preconditioner.DenoisingNetwork is required for neural-network-based operations
+pretrained parameters for phaseretrieval.preconditioner.DenoisingNetwork is required for neural-network-based operations
 (it might show poor performance with a case different from the trained condition)
 
 ## Notations and Functions

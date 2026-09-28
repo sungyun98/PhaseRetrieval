@@ -170,13 +170,13 @@ class Preconditioner():
     input value should be scaled to photon count, not detector count
     reference = https://doi.org/10.1103/PhysRevResearch.3.043066
     '''
-    def __init__(self, cnum = 16, path = './PRModule/param_pretrained.pth'):
+    def __init__(self, cnum = 16, path = './phaseretrieval/param_pretrained.pth'):
         '''
         load pretrained denoising network
         
         args:
             cnum = integer (default = 0.25)
-            path = string (default = './PRModule/pretrained.pth')
+            path = string (default = './phaseretrieval/param_pretrained.pth')
         '''
         super().__init__()
         
