@@ -9,6 +9,8 @@
 __all__ = ['Preconditioner']
 
 import math
+from importlib import resources
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -170,18 +172,25 @@ class Preconditioner():
     input value should be scaled to photon count, not detector count
     reference = https://doi.org/10.1103/PhysRevResearch.3.043066
     '''
-    def __init__(self, cnum = 16, path = './phaseretrieval/param_pretrained.pth'):
+    def __init__(self, cnum = 16, path = None):
         '''
         load pretrained denoising network
+
+        the weights are loaded on CPU with weights_only = True
         
         args:
-            cnum = integer (default = 0.25)
-            path = string (default = './phaseretrieval/param_pretrained.pth')
+            cnum = integer (default = 16)
+            path = string (default = None, the param_pretrained.pth file shipped with the package)
         '''
         super().__init__()
         
         self.net = DenoisingNetwork(cnum = cnum).eval()
-        self.net.load_state_dict(torch.load(path), strict = True)
+        if path is None:
+            with resources.as_file(resources.files(__package__) / 'param_pretrained.pth') as default:
+                state = torch.load(default, map_location = 'cpu', weights_only = True)
+        else:
+            state = torch.load(path, map_location = 'cpu', weights_only = True)
+        self.net.load_state_dict(state, strict = True)
     
     def fitSize(self, input, fill, height = 512, width = 512):
         '''

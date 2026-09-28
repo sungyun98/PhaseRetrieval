@@ -14,8 +14,7 @@ F64 = os.environ.get("REG_FLOAT64") == "1"
 FDT, CDT = (np.float64, np.complex128) if F64 else (np.float32, np.complex64)
 
 NAME = "pr_modern"
-NOTES = ["torch.set_num_threads(1) for bit-reproducible CPU results",
-         "torch.load wrapped to default map_location='cpu' (weights saved on cuda:0)"]
+NOTES = ["torch.set_num_threads(1) for bit-reproducible CPU results"]
 
 
 class Adapter:
@@ -29,12 +28,6 @@ class Adapter:
         torch.set_num_threads(1)
         if F64:
             torch.set_default_dtype(torch.float64)
-        _orig_load = torch.load
-
-        def _load(f, map_location=None, **kwargs):
-            return _orig_load(f, map_location="cpu" if map_location is None else map_location, **kwargs)
-
-        torch.load = _load
         from phaseretrieval import eval as pr_eval
         from phaseretrieval import func
         from phaseretrieval.algorithms import PhaseRetrieval
@@ -94,7 +87,7 @@ class Adapter:
 
     # ---- preconditioner.py ---------------------------------------------------------------
     def preconditioner(self, amplitude, unknown, limit, deep=True, toggle=False):
-        pre = self.Preconditioner(path=os.path.join(self.root, "phaseretrieval", "param_pretrained.pth"))
+        pre = self.Preconditioner()  # default: weights shipped inside the package
         return self._n(pre.getKernel(self._t(amplitude), self._t(unknown), limit=limit, deep=deep, toggle=toggle))[0]
 
     # ---- algorithms.py -------------------------------------------------------------------
