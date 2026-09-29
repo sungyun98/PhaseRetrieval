@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.fft import fft2, ifft2
 
-from .func import GaussianSmoothing, fftshift, freqfilter, ifftshift, phase, sqmesh
+from .func import GaussianSmoothing, _no_tf32, fftshift, freqfilter, ifftshift, phase, sqmesh
 from .preconditioner import Preconditioner
 
 #: A constant value, or a schedule ``(ratio_0, value_0, ratio_1, value_1, ...)``: ``value_k``
@@ -204,10 +204,11 @@ class ShrinkWrap(GaussianFilter):
             ``threshold`` times its maximum (per image), 0 elsewhere; dtype float32.
         """
         n = u.size(0)
-        u = F.conv2d(
-            F.pad(u, pad=(self.pad, self.pad, self.pad, self.pad), mode="reflect"),
-            weight=self.filter,
-        )
+        with _no_tf32():
+            u = F.conv2d(
+                F.pad(u, pad=(self.pad, self.pad, self.pad, self.pad), mode="reflect"),
+                weight=self.filter,
+            )
         u_max = u.view(n, -1).max(dim=-1).values.view(n, 1, 1, 1)
         return torch.gt(u, u_max * self.threshold).float()
 

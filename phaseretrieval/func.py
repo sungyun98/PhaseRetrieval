@@ -23,6 +23,7 @@ __all__ = [
     "GaussianSmoothing",
 ]
 
+import contextlib
 import math
 from typing import Any
 
@@ -31,6 +32,23 @@ import torch
 from torch import Tensor
 
 from .partialconv2d import PartialConv2d
+
+
+def _no_tf32() -> contextlib.AbstractContextManager:
+    """Run cuDNN convolutions in full float32 precision inside the context.
+
+    PyTorch allows TF32 for convolutions by default, which rounds their inputs to 10-bit
+    mantissas on recent GPUs. The convolutions of this package are cheap, so they always use
+    full precision; the previous settings are restored on exit.
+    """
+    c = torch.backends.cudnn
+    return c.flags(
+        enabled=c.enabled,
+        benchmark=c.benchmark,
+        benchmark_limit=c.benchmark_limit,
+        deterministic=c.deterministic,
+        allow_tf32=False,
+    )
 
 
 def MakeSupport(input: np.ndarray, **kwargs: Any) -> np.ndarray:
@@ -216,7 +234,7 @@ def GaussianSmoothing(input: Tensor, sigma: float, mask: Tensor | None = None) -
 
     The kernel size is ``2 * ceil(2 * sigma) + 1``, as in the MATLAB function ``imgaussfilt``.
     Borders are padded by reflection, and a partial convolution renormalizes the kernel over
-    the valid pixels.
+    the valid pixels. The convolution runs in full float32 precision (no TF32).
 
     Parameters
     ----------
@@ -244,7 +262,8 @@ def GaussianSmoothing(input: Tensor, sigma: float, mask: Tensor | None = None) -
     gfilter.weight.data = kernel
     gfilter.weight.requires_grad = False
 
-    output = gfilter(input, mask_in=mask)
+    with _no_tf32():
+        output = gfilter(input, mask_in=mask)
     if mask is not None:
         output = output * mask
     return output

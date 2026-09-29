@@ -19,7 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from .func import fftshift, ifftshift
+from .func import _no_tf32, fftshift, ifftshift
 from .partialconv2d import PartialConv2d
 
 
@@ -271,7 +271,8 @@ class Preconditioner:
     ) -> Tensor:
         """Generate the preconditioning kernel, or the denoised amplitude.
 
-        The network runs on the central 512 x 512 region, on the device of ``input``. Outside
+        The network runs on the central 512 x 512 region, on the device of ``input``, in full
+        float32 precision (without TF32, which PyTorch allows by default on GPUs). Outside
         this region the kernel is 1; it is ``1 - limit`` on pixels without photons and 1 on
         missing pixels.
 
@@ -315,7 +316,7 @@ class Preconditioner:
         scale = torch.max(output).clamp(min=1)
         output = output / scale
         self.net = self.net.to(output.device)  # run the network on the device of the input
-        with torch.no_grad():
+        with torch.no_grad(), _no_tf32():
             output = self.net(output, 1 - mask)
         output = output * (1 - mask)
         output = torch.exp(output.clamp(min=0, max=2) * scale) - 1
