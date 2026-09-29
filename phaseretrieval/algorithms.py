@@ -258,7 +258,9 @@ class PhaseRetrievalUnit(nn.Module):
 
         # allocate Gaussian filter for GPS algorithms
         if type in ["GPS-R", "GPS-F", "dpGPS-R", "dpGPS-F"]:
-            self.filter = GaussianFilter(self.magnitude.size(2), self.magnitude.size(3))
+            self.filter = GaussianFilter(self.magnitude.size(2), self.magnitude.size(3)).to(
+                input.device
+            )
         # allocate preconditioner for deep preconditioned algorithms
         if type in ["dpGPS-R", "dpGPS-F"]:
             kernel = kwargs.pop("preconditioner")
@@ -688,7 +690,7 @@ class PhaseRetrieval(nn.Module):
             self.sigma_continue = kwargs.pop("sigma_continue", True)
             self.shrink = ShrinkWrap(
                 threshold, sigma_initial, sigma_limit, ratio_update, sigma_current
-            )
+            ).to(input.device)
 
     def getParameter(
         self, input: Schedule, iteration: int, name: str = "parameter"

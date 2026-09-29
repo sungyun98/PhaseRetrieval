@@ -62,3 +62,20 @@ def test_shrinkwrap_calls_are_independent(per_sample_support):
     assert sigma_after_first < SHRINKWRAP["sigma_initial"]
     assert torch.equal(first, second)
     assert torch.equal(iterator.initial_support, support)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+@pytest.mark.parametrize(
+    "params",
+    [
+        dict(algorithm="GPS-R", error="R", sigma=0.5, alpha_count=2, t=1, s=0.9),
+        dict(
+            algorithm="HIO", error="R", beta=0.9, beta_type="const", boundary_push=0, **SHRINKWRAP
+        ),
+    ],
+)
+def test_iterator_built_from_gpu_tensors(params):
+    amplitude, support, unknown = (x.cuda() for x in _data())
+    iterator = PhaseRetrieval(amplitude, support, unknown, **params)  # no .to(device)
+    output, path = iterator(10, _phase(2).cuda(), **params)
+    assert output.is_cuda and torch.isfinite(path).all()
