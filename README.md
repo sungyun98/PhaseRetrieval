@@ -135,9 +135,10 @@ Several patterns of the same size, stacked as `(P, 1, H, W)`, are reconstructed 
 one reconstruction per pattern, which is much faster than one iterator per pattern (e.g. to
 refine many DPR results).
 
-Batches of 6 to 10 reconstructions per GPU are the fastest for 512 x 512 patterns (the default
-is 8), because their arrays fit in the L2 cache of the GPU. `error_interval=5` computes the
-error only every 5 iterations, which runs 1.4 to 1.5 times faster.
+By default, `ReconstructParallel` sets the batch size with `OptimalBatchSize`, from the L2
+cache of the GPU: the iterations run fastest when six complex arrays of a batch fill the cache
+(e.g. 8 reconstructions of 512 x 512 on a GPU with 96 MiB of L2 cache). `error_interval=5`
+computes the error only every 5 iterations, which runs 1.4 to 1.5 times faster.
 
 dRAAR and dpGPS use a preconditioner from a denoising network whose pretrained weights ship with
 the package (`phaseretrieval/param_pretrained.pth`). They need the intensity in photon counts,
