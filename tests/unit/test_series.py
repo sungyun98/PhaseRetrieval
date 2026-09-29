@@ -6,7 +6,7 @@ import pytest
 import torch
 from test_algorithms import _data, _phase
 
-from phaseretrieval import PhaseRetrieval
+from phaseretrieval import PhaseRetrieval, ReconstructParallel
 
 HIO = dict(algorithm="HIO", error="R", beta=0.9, beta_type="const", boundary_push=0)
 GPS = dict(algorithm="GPS-R", error="R", sigma=(0, 0.1, 0.5, 1), alpha_count=3, t=1, s=0.9)
@@ -146,3 +146,24 @@ def test_continue_from_last(params):
     assert torch.allclose(iterator.getError(amp), last["error"], rtol=1e-5)
     with pytest.raises(ValueError):
         iterator(2, phase, continue_=True, continue_from="first", **params)
+
+
+def test_reconstruct_parallel_matches_manual_chain():
+    amplitude, support, unknown = _data()
+    stages = [(20, dict(HIO, interval=5, **SW)), (20, GPS)]
+    out1, path1 = ReconstructParallel(
+        amplitude, support, unknown, stages, n_seeds=5, batch_size=2, devices=["cpu"]
+    )
+    out2, path2 = ReconstructParallel(
+        amplitude, support, unknown, stages, n_seeds=5, batch_size=2, devices=["cpu", "cpu"]
+    )
+    assert out1.shape == (5, 1, 64, 64) and path1.shape == (5, 40)
+    assert torch.equal(out1, out2) and torch.equal(path1, path2)  # independent of the devices
+    # the same chain by hand for the first batch (seeds 0 and 1)
+    from phaseretrieval.parallel import _initial_phase
+
+    first = PhaseRetrieval(amplitude, support, unknown, **stages[0][1])
+    second = PhaseRetrieval(amplitude, support, unknown, **GPS)
+    _, _, state = first(20, _initial_phase(0, 0, 2, 64, 64), continue_=True, **stages[0][1])
+    out, _, state = second(20, state, continue_=True, **GPS)
+    assert torch.equal(out1[:2], out) and torch.equal(path1[:2], state["path"])

@@ -25,9 +25,11 @@ from .func import (
     phase,
     sqmesh,
 )
+from .parallel import ReconstructParallel
 
 __all__ = [
     "PhaseRetrieval",
+    "ReconstructParallel",
     "SubpixelAlignment",
     "PairwiseDistance",
     "PRTF",
