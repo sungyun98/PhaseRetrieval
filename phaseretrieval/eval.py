@@ -35,6 +35,8 @@ from skimage.registration import phase_cross_correlation
 from torch import Tensor
 from tqdm import tqdm
 
+from .func import _no_tf32
+
 
 def SubpixelAlignment(
     input: np.ndarray,
@@ -357,7 +359,8 @@ def AlignObject(input: Tensor, target: Tensor | None = None) -> Tensor:
         Real objects of shape ``(N, 1, H, W)``. Not modified; gradients flow through the
         shifts.
     target : torch.Tensor, optional
-        Real targets of shape ``(N or 1, 1, H, W)``.
+        Real targets of shape ``(N or 1, 1, H, W)``. The cross-correlation runs in full
+        float32 precision (no TF32).
 
     Returns
     -------
@@ -376,7 +379,7 @@ def AlignObject(input: Tensor, target: Tensor | None = None) -> Tensor:
 
     limit = max(h, w) // 2
     rotated = torch.rot90(input, 2, dims=(-2, -1))
-    with torch.no_grad():
+    with torch.no_grad(), _no_tf32():
         weight = target.expand(n, 1, h, w).contiguous()
         corr = F.conv2d(input.reshape(1, n, h, w), weight, padding=limit, groups=n)[0]
         corr_rot = F.conv2d(rotated.reshape(1, n, h, w), weight, padding=limit, groups=n)[0]
