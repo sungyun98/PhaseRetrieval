@@ -13,6 +13,12 @@ PARAMS = {
     "dRAAR": dict(
         algorithm="dRAAR", beta=0.9, beta_type="const", boundary_push=0, limit=0.25, deep=True
     ),
+    "dpGPS-R": dict(
+        algorithm="dpGPS-R", sigma=(0, 0.1, 0.5, 1), alpha_count=3, limit=0.25, deep=True
+    ),
+    "dpGPS-F": dict(
+        algorithm="dpGPS-F", sigma=(0, 0.1, 0.5, 1), alpha_count=3, limit=0.25, deep=True
+    ),
 }
 
 
@@ -47,7 +53,3 @@ def test_pattern_count_checks():
     iterator = PhaseRetrieval(amplitude, support, unknown, **PARAMS["HIO"], error="R")
     with pytest.raises(ValueError):
         iterator(3, _phase(2), **PARAMS["HIO"])
-    with pytest.raises(ValueError):
-        PhaseRetrieval(
-            amplitude, support, unknown, algorithm="dpGPS-R", error="R", limit=0.25, deep=True
-        )

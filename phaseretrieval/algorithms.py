@@ -58,20 +58,25 @@ class GaussianFilter(nn.Module):
         mesh = sqmesh(height, width)
         self.register_buffer("mesh", mesh)
 
-    def forward(self, alpha: float) -> Tensor:
+    def forward(self, alpha: float | Tensor) -> Tensor:
         """Return the filter ``exp(-r**2 / (2 * alpha**2))`` normalized to a maximum of 1.
 
         Parameters
         ----------
-        alpha : float
-            Width (standard deviation) of the filter in pixels.
+        alpha : float or torch.Tensor
+            Width (standard deviation) of the filter in pixels, or widths of shape
+            ``(P, 1, 1, 1)`` for one filter per pattern.
 
         Returns
         -------
         torch.Tensor
-            Real tensor of shape ``(1, 1, H, W)``. Filters are cached per ``alpha``, device and
-            dtype, since ``alpha`` only changes with the frequency filter schedule.
+            Real tensor of shape ``(1, 1, H, W)``, or ``(P, 1, H, W)`` for tensor widths.
+            Filters of float widths are cached per ``alpha``, device and dtype, since ``alpha``
+            only changes with the frequency filter schedule.
         """
+        if isinstance(alpha, Tensor):
+            filter = torch.exp(-0.5 * self.mesh / alpha**2)
+            return filter / filter.amax(dim=(-2, -1), keepdim=True)
         key = (alpha, self.mesh.device, self.mesh.dtype)
         cache = self.__dict__.setdefault("_cache", {})
         if key not in cache:
@@ -265,8 +270,13 @@ class PhaseRetrievalUnit(nn.Module):
         if type in ["dpGPS-R", "dpGPS-F"]:
             kernel = kwargs.pop("preconditioner")
             self.register_buffer("kernel", kernel)
-            # step size of the dual update, constant: computed once, not in every iteration
-            self.gamma = (2 * kernel.min().pow(2) / kernel.max()).item()
+            # step size of the dual update, constant: computed once, not in every iteration;
+            # one per pattern, shape (P, 1, 1, 1), if there are several
+            if kernel.size(0) == 1:
+                self.gamma = (2 * kernel.min().pow(2) / kernel.max()).item()
+            else:
+                gamma = 2 * kernel.amin(dim=(1, 2, 3), keepdim=True).pow(2)
+                self.register_buffer("gamma", gamma / kernel.amax(dim=(1, 2, 3), keepdim=True))
 
     def updateSupport(self, support: Tensor) -> None:
         """Replace the support constraint.
@@ -370,7 +380,9 @@ class PhaseRetrievalUnit(nn.Module):
         """
         return 2 * self.projM(u) - u
 
-    def proxS(self, y: Tensor, param: float, alpha: float, type: str, conj: bool = True) -> Tensor:
+    def proxS(
+        self, y: Tensor, param: float | Tensor, alpha: float, type: str, conj: bool = True
+    ) -> Tensor:
         """Apply the proximal operator of the smoothed support constraint (GPS).
 
         The operator acts on the convex conjugate of the support constraint, with
@@ -381,8 +393,9 @@ class PhaseRetrievalUnit(nn.Module):
         ----------
         y : torch.Tensor
             Complex r-space Lagrange multiplier of shape ``(N, 1, H, W)``.
-        param : float
-            Step size of the dual update (``s`` in GPS, ``gamma`` in dpGPS).
+        param : float or torch.Tensor
+            Step size of the dual update (``s`` in GPS, ``gamma`` in dpGPS), or step sizes of
+            shape ``(P, 1, 1, 1)``, one per pattern (dpGPS with several patterns).
         alpha : float
             Frequency filter coefficient from `freqfilter`.
         type : {'R', 'F'}
@@ -405,17 +418,28 @@ class PhaseRetrievalUnit(nn.Module):
                 "Proximal operator on support constraint only supports convex conjugation version."
             )
 
+        per_pattern = isinstance(param, Tensor)
+        sqrt = param.sqrt() if per_pattern else math.sqrt(param)
+        cache = self.__dict__.setdefault("_filters", {})
         if type == "R":
             y = fft2(self.projS(y, True))
-            width = alpha / math.sqrt(param)
-            key = (width, y.device)
-            cache = self.__dict__.setdefault("_shifted_filters", {})
+            width = alpha / sqrt
+            # step sizes per pattern are constant, so the filters only change with alpha
+            key = ("R", alpha if per_pattern else width, per_pattern, y.device)
             if key not in cache:
                 cache[key] = ifftshift(self.filter(width))
             y = y * cache[key]
             y = ifft2(y)
         elif type == "F":
-            y = self.projS(y, True) * self.filter(2 * math.pi * alpha / math.sqrt(param))
+            width = 2 * math.pi * alpha / sqrt
+            if per_pattern:
+                key = ("F", alpha, y.device)
+                if key not in cache:
+                    cache[key] = self.filter(width)
+                filter = cache[key]
+            else:
+                filter = self.filter(width)
+            y = self.projS(y, True) * filter
 
         return y
 
@@ -594,7 +618,7 @@ class PhaseRetrieval(nn.Module):
         Measured k-space amplitude of shape ``(1, 1, H, W)``, not fftshifted. For dRAAR and
         dpGPS it must be scaled to photon counts. Several patterns, shape ``(P, 1, H, W)``,
         are reconstructed together with one reconstruction per pattern (``N = P``), each with
-        its own error normalization; dpGPS supports only one pattern.
+        its own error normalization, preconditioner (dRAAR, dpGPS) and step size (dpGPS).
     support : torch.Tensor
         Real-space support of shape ``(1 or N, 1, H, W)``, 1 inside and 0 outside.
     unknown : torch.Tensor
@@ -674,8 +698,6 @@ class PhaseRetrieval(nn.Module):
                 self.beta_lim = kwargs.pop("beta_lim")
         # get preconditioner for dRAAR and dpGPS (one per pattern)
         if algorithm in ["dRAAR", "dpGPS-R", "dpGPS-F"]:
-            if input.size(0) > 1 and algorithm != "dRAAR":
-                raise ValueError(f"{algorithm} supports only one pattern per iterator.")
             denoiser = Preconditioner()
             limit = kwargs.pop("limit")
             deep = kwargs.pop("deep")
