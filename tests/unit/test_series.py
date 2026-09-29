@@ -186,3 +186,28 @@ def test_error_interval(params):
     assert torch.equal(state5["error"], path1[:, checked].min(dim=1).values)
     with pytest.raises(ValueError):
         iterator(3, phase, **dict(params, error_interval=0))
+
+
+def test_reconstruct_parallel_with_torchrun(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    result = tmp_path / "result.pt"
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", PYTHONPATH=os.pathsep.join(sys.path))
+    command = [sys.executable, "-m", "torch.distributed.run", "--standalone"]
+    command += ["--nproc_per_node=2", os.path.join(os.path.dirname(__file__), "parallel_script.py")]
+    subprocess.run(command + [str(result)], check=True, env=env, capture_output=True, timeout=600)
+    distributed = torch.load(result, weights_only=True)
+    amplitude, support, unknown = _data()
+    HIO = dict(algorithm="HIO", error="R", beta=0.9, beta_type="const", boundary_push=0.1)
+    output, path = ReconstructParallel(
+        amplitude,
+        support,
+        unknown,
+        [(15, HIO), (15, GPS)],
+        n_seeds=7,
+        batch_size=2,
+        devices=["cpu"],
+    )
+    assert torch.equal(distributed["output"], output) and torch.equal(distributed["path"], path)

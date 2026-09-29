@@ -122,6 +122,19 @@ output, path = iterator(1000, state, **info)  # starts from the HIO results and 
 A following stage with ShrinkWrap continues from the sigma of the state (`sigma_continue`,
 default True) or starts from `sigma_current`.
 
+`ReconstructParallel` runs many reconstructions on all GPUs of a machine, one process per GPU,
+optionally through several connected stages. On several machines, launch a script that calls
+it with `torchrun` on every machine; rank 0 receives all results:
+
+```bash
+torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --rdzv-backend=c10d \
+    --rdzv-endpoint=node01:29500 reconstruct.py   # node_rank=1 on the second machine
+```
+
+Batches of 6 to 10 reconstructions per GPU are the fastest for 512 x 512 patterns (the default
+is 8), because their arrays fit in the L2 cache of the GPU. `error_interval=5` computes the
+error only every 5 iterations, which runs 1.4 to 1.5 times faster.
+
 dRAAR and dpGPS use a preconditioner from a denoising network whose pretrained weights ship with
 the package (`phaseretrieval/param_pretrained.pth`). They need the intensity in photon counts,
 and the network may perform poorly for conditions different from the trained ones.

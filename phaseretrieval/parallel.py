@@ -12,17 +12,21 @@ This follows the pattern of `torch.nn.parallel.DistributedDataParallel` (one pro
 each working on its own share of the data) rather than `torch.nn.DataParallel` (one process
 that splits every batch over the GPUs). DistributedDataParallel itself only applies to models
 with trainable parameters, whose gradients it synchronizes; the reconstructions here are
-independent, so the processes do not communicate and write their results into shared memory.
+independent, so the processes only exchange their results at the end: through shared memory
+on one machine, or through `torch.distributed` when launched with ``torchrun`` on one or more
+machines.
 """
 
 __all__ = ["ReconstructParallel"]
 
 import math
+import os
 from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch import Tensor
 
@@ -56,11 +60,12 @@ def _worker(
     device = devices[rank]
     if device.type == "cuda":
         torch.cuda.set_device(device)
-    input, support, unknown = tensors
+    # built on the device, so that the preconditioner of dRAAR and dpGPS runs there: on the CPU
+    # its result depends on the number of threads, which would make the results depend on how
+    # the processes were started
+    input, support, unknown = (t.to(device) for t in tensors)
     h, w = input.shape[-2:]
-    iterators = [
-        PhaseRetrieval(input, support, unknown, **params).to(device) for _, params in stages
-    ]
+    iterators = [PhaseRetrieval(input, support, unknown, **params) for _, params in stages]
     n_batches = math.ceil(n_seeds / batch_size)
     for batch in range(rank, n_batches, len(devices)):
         start = batch * batch_size
@@ -87,23 +92,36 @@ def ReconstructParallel(
     unknown: Tensor,
     stages: Sequence[Stage],
     n_seeds: int,
-    batch_size: int,
+    batch_size: int = 8,
     seed: int = 0,
     devices: Sequence[int | str | torch.device] | None = None,
     toggle: bool = False,
-) -> tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor] | tuple[None, None]:
     """Run independent reconstructions from random initial phases, spread over several GPUs.
 
-    The reconstructions are split into batches of ``batch_size``; each device, in a process
-    of its own, reconstructs every ``len(devices)``-th batch. Each batch runs through the
-    ``stages`` in series (see `PhaseRetrieval`, ``continue_out``): every stage starts from the
-    state left by the previous one. The random initial phases depend only on ``seed`` and the
-    batch index, so the results do not depend on the number of devices.
+    The reconstructions are split into batches of ``batch_size``; each process, on a device
+    of its own, reconstructs every ``n``-th batch, with ``n`` the number of processes. Each
+    batch runs through the ``stages`` in series (see `PhaseRetrieval`, ``continue_out``):
+    every stage starts from the state left by the previous one. The random initial phases
+    depend only on ``seed`` and the batch index, so the results do not depend on the number
+    of devices.
 
-    With one device (or on the CPU), everything runs in the calling process. With several,
-    the processes are started with `torch.multiprocessing` (``spawn``); in a script, call this
-    function under ``if __name__ == "__main__":``. The workers print nothing (their output does
-    not reach Jupyter notebooks anyway).
+    Two ways to run:
+
+    * **One machine** (a notebook or a plain script): with one device, or on the CPU,
+      everything runs in the calling process; with several devices, one process per device is
+      started with `torch.multiprocessing` (``spawn``), so in a script call this function
+      under ``if __name__ == "__main__":``.
+    * **One or more machines with torchrun** (``WORLD_SIZE`` is set, or a process group is
+      initialized): every process of the job calls this function; each uses the GPU
+      ``LOCAL_RANK`` (or the CPU) and a share of the batches, and rank 0 receives all results
+      over `torch.distributed` (a Gloo group). A process group is initialized (NCCL on GPUs,
+      Gloo on CPUs) and destroyed again if none exists. ``devices`` must then be None.
+
+    Small batches run faster per reconstruction as long as the arrays of a batch fit in the
+    L2 cache of the GPU: on an RTX 6000 Ada at 512 x 512, 6 to 10 reconstructions per batch
+    were the fastest (``batch_size=8`` by default), and 32 took twice as long per
+    reconstruction. The workers print nothing.
 
     Parameters
     ----------
@@ -116,12 +134,13 @@ def ReconstructParallel(
         ``[(500, hio_params), (1000, gps_params)]``. A stage may set ``continue_from``.
     n_seeds : int
         Number of reconstructions.
-    batch_size : int
+    batch_size : int, default 8
         Reconstructions per batch on one device.
     seed : int, default 0
         Seed of the random initial phases.
     devices : sequence of int, str or torch.device, optional
-        Devices to use; by default all visible GPUs, or the CPU if there is none.
+        Devices to use on one machine; by default all visible GPUs, or the CPU if there is
+        none. Not used with torchrun.
     toggle : bool, default False
         If True, return the k-space result of the last stage without projection on the
         support constraint (see `PhaseRetrieval.forward`).
@@ -130,10 +149,18 @@ def ReconstructParallel(
     -------
     output : torch.Tensor
         Best iterates of the last stage, shape ``(n_seeds, 1, H, W)``, on the CPU: real r-space
-        objects, or complex k-space iterates if ``toggle`` is True.
+        objects, or complex k-space iterates if ``toggle`` is True. None on the ranks other
+        than 0 with torchrun.
     path : torch.Tensor
-        Errors after each iteration of all stages, shape ``(n_seeds, total iterations)``.
+        Errors after each iteration of all stages, shape ``(n_seeds, total iterations)``, on
+        the CPU (None on the ranks other than 0 with torchrun).
     """
+    if _launched_with_torchrun():
+        if devices is not None:
+            raise ValueError("devices must be None with torchrun: each rank uses LOCAL_RANK.")
+        return _reconstruct_distributed(
+            input, support, unknown, stages, n_seeds, batch_size, seed, toggle
+        )
     if devices is None:
         n_gpu = torch.cuda.device_count()
         devices = [f"cuda:{i}" for i in range(n_gpu)] if n_gpu else ["cpu"]
@@ -155,3 +182,54 @@ def ReconstructParallel(
         path.share_memory_()
         mp.spawn(_worker, args=(*args, output, path), nprocs=len(devices), join=True)
     return output, path
+
+
+def _launched_with_torchrun() -> bool:
+    """Whether this process belongs to a torchrun job (or an initialized process group)."""
+    if dist.is_available() and dist.is_initialized():
+        return True
+    return int(os.environ.get("WORLD_SIZE", "1")) > 1
+
+
+def _reconstruct_distributed(
+    input: Tensor,
+    support: Tensor,
+    unknown: Tensor,
+    stages: Sequence[Stage],
+    n_seeds: int,
+    batch_size: int,
+    seed: int,
+    toggle: bool,
+) -> tuple[Tensor, Tensor] | tuple[None, None]:
+    """ReconstructParallel for the processes of a torchrun job, on one or more machines."""
+    created = not dist.is_initialized()
+    if created:
+        dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
+    rank, world = dist.get_rank(), dist.get_world_size()
+    if torch.cuda.is_available():
+        device = torch.device("cuda", int(os.environ.get("LOCAL_RANK", "0")))
+    else:
+        device = torch.device("cpu")
+    cpu_group = dist.new_group(backend="gloo")  # results are gathered from the CPU
+
+    stages = [(int(iteration), dict(params)) for iteration, params in stages]
+    h, w = input.shape[-2:]
+    dtype = torch.complex64 if toggle else torch.float32
+    if torch.get_default_dtype() == torch.float64:
+        dtype = torch.complex128 if toggle else torch.float64
+    output = torch.zeros(n_seeds, 1, h, w, dtype=dtype)
+    path = torch.zeros(n_seeds, sum(iteration for iteration, _ in stages))
+    tensors = (input.cpu(), support.cpu(), unknown.cpu())
+    # every rank fills its own batches; the rows of the other ranks stay zero
+    _worker(
+        rank, [device] * world, tensors, stages, n_seeds, batch_size, seed, toggle, output, path
+    )
+
+    # summing over the ranks assembles the results on rank 0 (x + 0 = x exactly)
+    real_output = torch.view_as_real(output) if output.is_complex() else output
+    dist.reduce(real_output, dst=0, op=dist.ReduceOp.SUM, group=cpu_group)
+    dist.reduce(path, dst=0, op=dist.ReduceOp.SUM, group=cpu_group)
+    dist.destroy_process_group(cpu_group)
+    if created:
+        dist.destroy_process_group()
+    return (output, path) if rank == 0 else (None, None)
