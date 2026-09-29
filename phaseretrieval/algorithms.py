@@ -592,11 +592,13 @@ class PhaseRetrieval(nn.Module):
     ----------
     input : torch.Tensor
         Measured k-space amplitude of shape ``(1, 1, H, W)``, not fftshifted. For dRAAR and
-        dpGPS it must be scaled to photon counts.
+        dpGPS it must be scaled to photon counts. Several patterns, shape ``(P, 1, H, W)``,
+        are reconstructed together with one reconstruction per pattern (``N = P``), each with
+        its own error normalization; dpGPS supports only one pattern.
     support : torch.Tensor
         Real-space support of shape ``(1 or N, 1, H, W)``, 1 inside and 0 outside.
     unknown : torch.Tensor
-        Mask of shape ``(1, 1, H, W)``, not fftshifted: 1 where the amplitude is unknown
+        Mask of shape ``(1 or P, 1, H, W)``, not fftshifted: 1 where the amplitude is unknown
         (missing data), 0 where it is measured.
     algorithm : str
         One of the algorithms listed above.
@@ -670,12 +672,20 @@ class PhaseRetrieval(nn.Module):
             self.beta_type = kwargs.pop("beta_type")
             if self.beta_type != "const":
                 self.beta_lim = kwargs.pop("beta_lim")
-        # get preconditioner for dRAAR and dpGPS
+        # get preconditioner for dRAAR and dpGPS (one per pattern)
         if algorithm in ["dRAAR", "dpGPS-R", "dpGPS-F"]:
+            if input.size(0) > 1 and algorithm != "dRAAR":
+                raise ValueError(f"{algorithm} supports only one pattern per iterator.")
             denoiser = Preconditioner()
             limit = kwargs.pop("limit")
             deep = kwargs.pop("deep")
-            option["preconditioner"] = denoiser.getKernel(input, unknown, limit, deep)
+            unknowns = unknown.expand(input.size(0), -1, -1, -1)
+            option["preconditioner"] = torch.cat(
+                [
+                    denoiser.getKernel(input[i : i + 1], unknowns[i : i + 1], limit, deep)
+                    for i in range(input.size(0))
+                ]
+            )
         # initialize phase retrieval iteration unit
         self.block = PhaseRetrievalUnit(input, support, unknown, algorithm, **option)
         # initialize shrinkwrap module
@@ -777,9 +787,12 @@ class PhaseRetrieval(nn.Module):
         """
         a0 = self.magnitude
         a = a * (1 - self.unknown)
+        # normalization per pattern if there are several
+        per_pattern = a0.size(0) > 1
         if self.error == "R":
             # R-factor
-            R = torch.abs(a - a0).sum(dim=(1, 2, 3)) / a0.sum()
+            norm = a0.sum(dim=(1, 2, 3)) if per_pattern else a0.sum()
+            R = torch.abs(a - a0).sum(dim=(1, 2, 3)) / norm
             return R
         elif self.error == "NLL":
             # negative Poisson log-likelihood
@@ -788,7 +801,8 @@ class PhaseRetrieval(nn.Module):
             valid = (1 - self.unknown) * (i0 > 1)
             NLL = F.poisson_nll_loss(i, i0, log_input=False, full=True, reduction="none")
             NLL = NLL * valid
-            return NLL.sum(dim=(1, 2, 3)) / valid.sum()
+            norm = valid.sum(dim=(1, 2, 3)) if per_pattern else valid.sum()
+            return NLL.sum(dim=(1, 2, 3)) / norm
         else:
             raise ValueError(f"{self.error} is not supported for error metric.")
 
@@ -882,6 +896,11 @@ class PhaseRetrieval(nn.Module):
         if continue_from not in ("best", "last"):
             raise ValueError(f"continue_from must be 'best' or 'last', not {continue_from!r}.")
         state = initial_phase if isinstance(initial_phase, dict) else None
+        n_start = (initial_phase if state is None else state["z"]).size(0)
+        if self.magnitude.size(0) > 1 and n_start != self.magnitude.size(0):
+            raise ValueError(
+                f"{self.magnitude.size(0)} patterns need as many initial phases, not {n_start}."
+            )
         if state is None:
             z_start = self.magnitude * initial_phase
         else:
