@@ -93,6 +93,33 @@ value of the true object itself. The parameters of every algorithm are described
 docstring of `PhaseRetrieval` (`help(PhaseRetrieval)`), and the same dictionary can be passed to
 the constructor and to the call.
 
+Iterators can be connected in series. With `continuous=True`, a call also returns a state
+(best iterates, support after ShrinkWrap, ShrinkWrap sigma), from which the same or another
+iterator continues. For example, HIO with ShrinkWrap followed by GPS-R on the updated support,
+continuing the example above:
+
+```python
+hio_params = {
+    "algorithm": "HIO",
+    "error": "R",
+    "beta": 0.9,
+    "beta_type": "const",
+    "boundary_push": 0,
+    "shrinkwrap": True,
+    "sigma_initial": 3,
+    "sigma_limit": 1.5,
+    "ratio_update": 0.01,
+    "threshold": 0.1,
+    "interval": 50,
+}
+hio = PhaseRetrieval(amplitude, support, unknown, **hio_params).to(device)
+_, _, state = hio(500, initial_phase, continuous=True, **hio_params)
+output, path = iterator(1000, state, **info)  # starts from the HIO results and support
+```
+
+A following stage with ShrinkWrap continues from the sigma of the state (`sigma_continue`,
+default True) or starts from `sigma_current`.
+
 dRAAR and dpGPS use a preconditioner from a denoising network whose pretrained weights ship with
 the package (`phaseretrieval/param_pretrained.pth`). They need the intensity in photon counts,
 and the network may perform poorly for conditions different from the trained ones.

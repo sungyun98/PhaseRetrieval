@@ -80,8 +80,9 @@ class ShrinkWrap(GaussianFilter):
 
     The object is smoothed with a normalized Gaussian kernel of size
     ``2 * ceil(2 * sigma_initial) + 1`` (as in the MATLAB function ``imgaussfilt``) and
-    thresholded. After each `update`, ``sigma`` is multiplied by ``1 - ratio_update`` until it
-    reaches ``sigma_limit``; `reset` restores ``sigma_initial``.
+    thresholded. It starts from ``sigma_current``; after each `update`, ``sigma`` is multiplied
+    by ``1 - ratio_update`` until it reaches ``sigma_limit``. `reset` starts again from
+    ``sigma_current`` or from a given sigma, e.g. the one reached by a previous run.
 
     Parameters
     ----------
@@ -94,11 +95,15 @@ class ShrinkWrap(GaussianFilter):
         ``sigma_initial``, the kernel is fixed.
     ratio_update : float, default 0.01
         Relative decrease of ``sigma`` per update.
+    sigma_current : float, optional
+        Standard deviation to start from, between ``sigma_limit`` and ``sigma_initial``; by
+        default ``sigma_initial``. The kernel size is always set by ``sigma_initial``.
 
     Raises
     ------
     ValueError
-        If ``sigma_initial`` is smaller than ``sigma_limit``.
+        If ``sigma_initial`` is smaller than ``sigma_limit``, or ``sigma_current`` is outside
+        ``[sigma_limit, sigma_initial]``.
 
     References
     ----------
@@ -111,13 +116,22 @@ class ShrinkWrap(GaussianFilter):
         sigma_initial: float = 3,
         sigma_limit: float = 1.5,
         ratio_update: float = 0.01,
+        sigma_current: float | None = None,
     ) -> None:
         if sigma_initial < sigma_limit:
             raise ValueError(
                 f"sigma_initial ({sigma_initial}) must not be smaller than sigma_limit "
                 f"({sigma_limit})."
             )
+        if sigma_current is None:
+            sigma_current = sigma_initial
+        if not sigma_limit <= sigma_current <= sigma_initial:
+            raise ValueError(
+                f"sigma_current ({sigma_current}) must be between sigma_limit ({sigma_limit}) and "
+                f"sigma_initial ({sigma_initial})."
+            )
         self.sigma_initial = sigma_initial
+        self.sigma_current = sigma_current
         self.sigma_limit = sigma_limit
         self.ratio = ratio_update
         self.threshold = threshold
@@ -129,9 +143,28 @@ class ShrinkWrap(GaussianFilter):
         self.register_buffer("filter", self.mesh * 0)
         self.reset()
 
-    def reset(self) -> None:
-        """Restore ``sigma_initial`` and its kernel."""
-        self.sigma = self.sigma_initial
+    def reset(self, sigma: float | None = None) -> None:
+        """Start again from ``sigma_current``, or from ``sigma``, and compute its kernel.
+
+        Parameters
+        ----------
+        sigma : float, optional
+            Standard deviation to start from, e.g. the one reached by a previous run; it may be
+            below ``sigma_limit`` (the kernel is then fixed). By default, ``sigma_current``.
+
+        Raises
+        ------
+        ValueError
+            If ``sigma`` is larger than ``sigma_initial``, which sets the kernel size.
+        """
+        if sigma is None:
+            sigma = self.sigma_current
+        elif sigma > self.sigma_initial:
+            raise ValueError(
+                f"sigma ({sigma}) must not be larger than sigma_initial ({self.sigma_initial}), "
+                "which sets the kernel size."
+            )
+        self.sigma = sigma
         self._compute_filter()
 
     def _compute_filter(self) -> None:
@@ -503,6 +536,13 @@ class PhaseRetrieval(nn.Module):
     iterate with the lowest error. Whenever a scheduled parameter changes, the iteration
     restarts from the best iterate so far.
 
+    Iterators can be connected in series: with ``continuous=True``, `forward` also returns a
+    state (best iterates, support and ShrinkWrap sigma) from which the same or another
+    iterator, e.g. with another algorithm or other parameters, continues::
+
+        output, path, state = hio(1000, initial_phase, continuous=True, **hio_params)
+        output, path = gps(1000, state, **gps_params)
+
     Supported algorithms (``algorithm``):
 
     ``'HIO'``
@@ -544,9 +584,10 @@ class PhaseRetrieval(nn.Module):
     error : {'R', 'NLL'}
         Error metric.
     shrinkwrap : bool, default False
-        Update the support with `ShrinkWrap` every ``interval`` iterations. Every call of
-        `forward` starts again from ``support`` and ``sigma_initial``, so that batches of
-        reconstructions are independent.
+        Update the support with `ShrinkWrap` every ``interval`` iterations. A call of `forward`
+        with initial phases starts from ``support`` and ``sigma_current``, so that batches of
+        reconstructions are independent; a call with a state starts from the support of the
+        state and, if ``sigma_continue`` is True, from its sigma.
     **kwargs
         Keyword arguments listed below. Other keywords are ignored, so the same dictionary
         can be passed to the constructor and to `forward`.
@@ -567,6 +608,12 @@ class PhaseRetrieval(nn.Module):
         ShrinkWrap parameters, see `ShrinkWrap`.
     interval : int
         Number of iterations between ShrinkWrap updates.
+    sigma_current : float, optional
+        ShrinkWrap sigma to start from, between ``sigma_limit`` and ``sigma_initial``; by
+        default ``sigma_initial``.
+    sigma_continue : bool, default True
+        When `forward` starts from a state that carries a ShrinkWrap sigma, continue from that
+        sigma instead of ``sigma_current``. It must not exceed ``sigma_initial``.
 
     References
     ----------
@@ -595,6 +642,7 @@ class PhaseRetrieval(nn.Module):
         self.register_buffer("magnitude", input)
         self.register_buffer("unknown", unknown)
         self.register_buffer("support", support)
+        self.register_buffer("initial_support", support)
         self.algorithm = algorithm
         self.error = error
         option = {}
@@ -619,8 +667,11 @@ class PhaseRetrieval(nn.Module):
             ratio_update = kwargs.pop("ratio_update")
             threshold = kwargs.pop("threshold")
             self.interval = kwargs.pop("interval")
-            self.register_buffer("initial_support", support)
-            self.shrink = ShrinkWrap(threshold, sigma_initial, sigma_limit, ratio_update)
+            sigma_current = kwargs.pop("sigma_current", None)
+            self.sigma_continue = kwargs.pop("sigma_continue", True)
+            self.shrink = ShrinkWrap(
+                threshold, sigma_initial, sigma_limit, ratio_update, sigma_current
+            )
 
     def getParameter(
         self, input: Schedule, iteration: int, name: str = "parameter"
@@ -723,19 +774,31 @@ class PhaseRetrieval(nn.Module):
             raise ValueError(f"{self.error} is not supported for error metric.")
 
     def forward(
-        self, iteration: int, initial_phase: Tensor, toggle: bool = False, **kwargs: Any
-    ) -> tuple[Tensor, Tensor]:
+        self,
+        iteration: int,
+        initial_phase: Tensor | dict[str, Tensor],
+        toggle: bool = False,
+        continuous: bool = False,
+        **kwargs: Any,
+    ) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, dict[str, Tensor]]:
         """Run the phase retrieval algorithm.
 
         Parameters
         ----------
         iteration : int
             Number of iterations.
-        initial_phase : torch.Tensor
+        initial_phase : torch.Tensor or dict
             Complex tensor ``exp(i * theta)`` of shape ``(N, 1, H, W)``; ``theta`` is usually
             drawn uniformly from ``[0, 2 * pi)``. ``N`` sets the number of reconstructions.
+            Alternatively, the state returned by a previous call with ``continuous=True``, of
+            this or another iterator on the same data: the iteration then starts from the best
+            iterates, the support and (see ``sigma_continue``) the ShrinkWrap sigma of that call.
+            HIO, RAAR, gRAAR and dRAAR start from ``u = ifft2(z)``, GPS and dpGPS from ``z``
+            and ``y``.
         toggle : bool, default False
             If True, return the k-space result without projection on the support constraint.
+        continuous : bool, default False
+            If True, also return the state from which a following call continues.
         **kwargs
             Keyword arguments listed below; other keywords are ignored.
 
@@ -762,23 +825,49 @@ class PhaseRetrieval(nn.Module):
             k-space iterate (not fftshifted).
         path : torch.Tensor
             Real tensor of shape ``(N, iteration)``: error after each iteration.
+        state : dict of torch.Tensor
+            Returned only if ``continuous`` is True, with the keys:
+
+            * ``'z'``: complex best k-space iterates, shape ``(N, 1, H, W)``, not fftshifted
+              (``fft2(u)`` for HIO, RAAR, gRAAR and dRAAR);
+            * ``'y'``: complex Lagrange multipliers of GPS and dpGPS, shape ``(N, 1, H, W)``
+              (zeros for the other algorithms);
+            * ``'support'``: support at the end of the call, shape ``(N, 1, H, W)``;
+            * ``'sigma'``: float64 ShrinkWrap sigma at the end of the call, shape ``(N,)``
+              (the incoming one if this iterator has no ShrinkWrap, NaN if none);
+            * ``'error'``: error of the best iterates, shape ``(N,)``.
+
+            All tensors have ``N`` as first dimension, so that `torch.nn.DataParallel` can
+            split and gather them.
 
         Raises
         ------
         ValueError
-            If the algorithm, error metric, ``beta_type`` or a schedule is not supported, or
-            ``iteration`` is less than 1.
+            If the algorithm, error metric, ``beta_type`` or a schedule is not supported,
+            ``iteration`` is less than 1, or the sigma of the state exceeds ``sigma_initial``.
         """
-        size_batch = initial_phase.size(0)
-        device = initial_phase.device
+        state = initial_phase if isinstance(initial_phase, dict) else None
+        if state is None:
+            z_start = self.magnitude * initial_phase
+        else:
+            z_start = state["z"].clone()
+        size_batch = z_start.size(0)
+        device = z_start.device
+
+        # support: the initial one, or that of the state
+        support = self.initial_support if state is None else state["support"]
+        if self.shrinkwrap and support.size(0) == 1:
+            support = torch.repeat_interleave(support, repeats=size_batch, dim=0)
+        self.support = support
+        self.block.updateSupport(support)
+
+        # ShrinkWrap sigma: sigma_current, or that of the state
+        sigma_in = None
+        if state is not None and "sigma" in state:
+            sigma_in = state["sigma"].flatten()[0].item()
+            sigma_in = None if math.isnan(sigma_in) else sigma_in
         if self.shrinkwrap:
-            # start from the initial support (one per reconstruction) and ShrinkWrap state
-            support = self.initial_support
-            if support.size(0) == 1:
-                support = torch.repeat_interleave(support, repeats=size_batch, dim=0)
-            self.support = support
-            self.block.updateSupport(support)
-            self.shrink.reset()
+            self.shrink.reset(sigma_in if self.sigma_continue else None)
         # phase retrieval iteration
         var = {}
         u_best = z_best = y_best = None
@@ -789,7 +878,7 @@ class PhaseRetrieval(nn.Module):
             if self.algorithm in ["HIO", "RAAR", "gRAAR", "dRAAR"]:
                 # initialize
                 if n == 0:
-                    u_best = ifft2(self.magnitude * initial_phase)
+                    u_best = ifft2(z_start)
                     beta_step, beta_list = self.getParameter(
                         kwargs.pop("beta"), iteration, name="beta"
                     )
@@ -834,8 +923,8 @@ class PhaseRetrieval(nn.Module):
             elif self.algorithm in ["GPS-R", "GPS-F", "dpGPS-R", "dpGPS-F"]:
                 # initialize
                 if n == 0:
-                    z_best = self.magnitude * initial_phase
-                    y_best = torch.zeros_like(initial_phase)
+                    z_best = z_start
+                    y_best = torch.zeros_like(z_start) if state is None else state["y"].clone()
                     sigma_step, sigma_list = self.getParameter(
                         kwargs.pop("sigma"), iteration, name="sigma"
                     )
@@ -910,4 +999,23 @@ class PhaseRetrieval(nn.Module):
         else:
             raise ValueError("iteration must be at least 1.")
 
-        return output, path
+        if not continuous:
+            return output, path
+
+        if z_best is None:
+            z_best = fft2(u_best)
+            y_best = torch.zeros_like(z_best)
+        sigma_out = self.shrink.sigma if self.shrinkwrap else sigma_in
+        state = {
+            "z": z_best,
+            "y": y_best,
+            "support": self.support.expand(size_batch, -1, -1, -1).clone(),
+            "sigma": torch.full(
+                (size_batch,),
+                math.nan if sigma_out is None else sigma_out,
+                dtype=torch.float64,
+                device=device,
+            ),
+            "error": error_min,
+        }
+        return output, path, state
