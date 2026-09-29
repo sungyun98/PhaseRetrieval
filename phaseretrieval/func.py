@@ -234,7 +234,8 @@ def GaussianSmoothing(input: Tensor, sigma: float, mask: Tensor | None = None) -
 
     The kernel size is ``2 * ceil(2 * sigma) + 1``, as in the MATLAB function ``imgaussfilt``.
     Borders are padded by reflection, and a partial convolution renormalizes the kernel over
-    the valid pixels. The convolution runs in full float32 precision (no TF32).
+    the valid pixels. The convolution runs on the device and in the dtype of ``input``, without
+    TF32.
 
     Parameters
     ----------
@@ -254,11 +255,13 @@ def GaussianSmoothing(input: Tensor, sigma: float, mask: Tensor | None = None) -
     ksize = 2 * math.ceil(2 * sigma) + 1
     psize = math.ceil(2 * sigma)
 
-    kernel = sqmesh(ksize, ksize)
+    kernel = sqmesh(ksize, ksize).to(device=input.device, dtype=input.dtype)
     kernel = torch.exp(-0.5 * kernel / sigma**2)
     kernel = kernel / kernel.sum()
 
-    gfilter = PartialConv2d(1, 1, ksize, padding=psize, padding_mode="reflect", bias=False)
+    gfilter = PartialConv2d(1, 1, ksize, padding=psize, padding_mode="reflect", bias=False).to(
+        device=input.device, dtype=input.dtype
+    )
     gfilter.weight.data = kernel
     gfilter.weight.requires_grad = False
 

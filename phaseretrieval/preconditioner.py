@@ -316,8 +316,9 @@ class Preconditioner:
         scale = torch.max(output).clamp(min=1)
         output = output / scale
         self.net = self.net.to(output.device)  # run the network on the device of the input
+        dtype = next(self.net.parameters()).dtype  # the network runs in its own dtype
         with torch.no_grad(), _no_tf32():
-            output = self.net(output, 1 - mask)
+            output = self.net(output.to(dtype), (1 - mask).to(dtype)).to(input.dtype)
         output = output * (1 - mask)
         output = torch.exp(output.clamp(min=0, max=2) * scale) - 1
         output = output / 10  # network trained for 100 times intensity, so 10 times for amplitude

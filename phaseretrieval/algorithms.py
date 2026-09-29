@@ -259,7 +259,7 @@ class PhaseRetrievalUnit(nn.Module):
         # allocate Gaussian filter for GPS algorithms
         if type in ["GPS-R", "GPS-F", "dpGPS-R", "dpGPS-F"]:
             self.filter = GaussianFilter(self.magnitude.size(2), self.magnitude.size(3)).to(
-                input.device
+                device=input.device, dtype=input.dtype
             )
         # allocate preconditioner for deep preconditioned algorithms
         if type in ["dpGPS-R", "dpGPS-F"]:
@@ -700,7 +700,7 @@ class PhaseRetrieval(nn.Module):
             self.sigma_continue = kwargs.pop("sigma_continue", True)
             self.shrink = ShrinkWrap(
                 threshold, sigma_initial, sigma_limit, ratio_update, sigma_current
-            ).to(input.device)
+            ).to(device=input.device, dtype=input.dtype)
 
     def getParameter(
         self, input: Schedule, iteration: int, name: str = "parameter"
@@ -928,8 +928,9 @@ class PhaseRetrieval(nn.Module):
         error_interval = int(kwargs.get("error_interval", 1))
         if error_interval < 1:
             raise ValueError(f"error_interval must be at least 1, not {error_interval}.")
-        error_min = torch.zeros(size_batch, device=device)
-        path = torch.full((size_batch, iteration), math.nan, device=device)
+        dtype = self.magnitude.dtype
+        error_min = torch.zeros(size_batch, device=device, dtype=dtype)
+        path = torch.full((size_batch, iteration), math.nan, device=device, dtype=dtype)
         evaluated = False  # whether an error has been computed yet
         for n in range(iteration):
             check = (n + 1) % error_interval == 0 or n == iteration - 1

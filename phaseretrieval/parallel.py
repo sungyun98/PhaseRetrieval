@@ -37,18 +37,25 @@ from .algorithms import PhaseRetrieval
 Stage = tuple[int, dict[str, Any]]
 
 
-def _initial_phase(seed: int, start: int, n: int, h: int, w: int) -> Tensor:
+def _initial_phase(
+    seed: int, start: int, n: int, h: int, w: int, dtype: torch.dtype = torch.float32
+) -> Tensor:
     """Random phase factors of reconstructions ``start`` to ``start + n - 1``.
 
     Each reconstruction has its own generator, seeded by ``(seed, index)``, so the phases do
     not depend on the batch size or on the number and order of the devices.
     """
-    theta = torch.empty(n, 1, h, w)
+    theta = torch.empty(n, 1, h, w, dtype=dtype)
     for k in range(n):
         state = np.random.SeedSequence([seed, start + k]).generate_state(2, dtype=np.uint32)
         generator = torch.Generator().manual_seed(int(state[0]) << 32 | int(state[1]))
-        theta[k] = torch.rand(1, h, w, generator=generator) * 2 * math.pi
+        theta[k] = torch.rand(1, h, w, generator=generator, dtype=dtype) * 2 * math.pi
     return torch.polar(torch.ones_like(theta), theta)
+
+
+def _complex(dtype: torch.dtype) -> torch.dtype:
+    """Complex dtype matching a real one."""
+    return torch.complex128 if dtype == torch.float64 else torch.complex64
 
 
 def OptimalBatchSize(
@@ -128,7 +135,7 @@ def _worker(
     for batch in range(rank, n_batches, len(devices)):
         start = batch * batch_size
         n = min(batch_size, n_seeds - start)
-        start_state = _initial_phase(seed, start, n, h, w).to(device)
+        start_state = _initial_phase(seed, start, n, h, w, input.dtype).to(device)
         paths = []
         with torch.no_grad():
             for k, (iterator, (iteration, params)) in enumerate(zip(iterators, stages)):
@@ -227,12 +234,10 @@ def ReconstructParallel(
     stages = [(int(iteration), dict(params)) for iteration, params in stages]
     h, w = input.shape[-2:]
     if batch_size is None:
-        batch_size = min(OptimalBatchSize(h, w, device) for device in devices)
-    dtype = torch.complex64 if toggle else torch.float32
-    if torch.get_default_dtype() == torch.float64:
-        dtype = torch.complex128 if toggle else torch.float64
+        batch_size = min(OptimalBatchSize(h, w, d, _complex(input.dtype)) for d in devices)
+    dtype = _complex(input.dtype) if toggle else input.dtype
     output = torch.zeros(n_seeds, 1, h, w, dtype=dtype)
-    path = torch.zeros(n_seeds, sum(iteration for iteration, _ in stages))
+    path = torch.zeros(n_seeds, sum(iteration for iteration, _ in stages), dtype=input.dtype)
     tensors = (input.cpu(), support.cpu(), unknown.cpu())
     args = (devices, tensors, stages, n_seeds, batch_size, seed, toggle)
 
@@ -276,14 +281,12 @@ def _reconstruct_distributed(
     stages = [(int(iteration), dict(params)) for iteration, params in stages]
     h, w = input.shape[-2:]
     if batch_size is None:  # the same for all ranks: the smallest optimum
-        size = torch.tensor(OptimalBatchSize(h, w, device))
+        size = torch.tensor(OptimalBatchSize(h, w, device, _complex(input.dtype)))
         dist.all_reduce(size, op=dist.ReduceOp.MIN, group=cpu_group)
         batch_size = int(size)
-    dtype = torch.complex64 if toggle else torch.float32
-    if torch.get_default_dtype() == torch.float64:
-        dtype = torch.complex128 if toggle else torch.float64
+    dtype = _complex(input.dtype) if toggle else input.dtype
     output = torch.zeros(n_seeds, 1, h, w, dtype=dtype)
-    path = torch.zeros(n_seeds, sum(iteration for iteration, _ in stages))
+    path = torch.zeros(n_seeds, sum(iteration for iteration, _ in stages), dtype=input.dtype)
     tensors = (input.cpu(), support.cpu(), unknown.cpu())
     # every rank fills its own batches; the rows of the other ranks stay zero
     _worker(
