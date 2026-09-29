@@ -41,8 +41,9 @@ with `cpu` for a CPU-only installation.
 ## Usage
 
 `demo.ipynb` walks through a complete reconstruction of `sample_lena.mat`, including the
-evaluation (alignment, pairwise distance, PRTF, PSD and eigenmodes) and multi-GPU use with
-`torch.nn.DataParallel`. In short:
+evaluation (alignment, pairwise distance, PRTF, PSD and eigenmodes), running the
+reconstructions on all GPUs with `ReconstructParallel` (one process per GPU). In short, on one
+device:
 
 ```python
 import numpy as np
