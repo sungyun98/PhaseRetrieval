@@ -141,3 +141,28 @@ def test_symm_offset_odd_and_even_sizes(shape, offset):
     half = (centre[0] + 0.5, centre[1] - 0.5)
     expected = np.trunc(np.subtract(half, (shape[0] // 2, shape[1] // 2))).astype(int)
     assert np.array_equal(SymmOffset(_symmetric(shape, half)), expected)
+
+
+def _symm_offset_skimage(pattern):
+    """SymmOffset before the PyTorch port (scikit-image masked registration)."""
+    from skimage.registration import phase_cross_correlation
+
+    rotated = np.rot90(pattern, 2)
+    result = phase_cross_correlation(
+        pattern, rotated, reference_mask=~np.isnan(pattern), moving_mask=~np.isnan(rotated)
+    )
+    shift = result[0] if isinstance(result, tuple) else result
+    return np.trunc((shift - (1 - np.asarray(pattern.shape) % 2)) / 2).astype(int)
+
+
+@pytest.mark.parametrize("device", ["cpu"] + (["cuda"] if torch.cuda.is_available() else []))
+def test_symm_offset_matches_scikit_image(device):
+    rs = np.random.RandomState(0)
+    for k in range(15):
+        shape = (int(rs.randint(40, 90)), int(rs.randint(40, 90)))
+        centre = (
+            shape[0] // 2 + rs.randint(-6, 7) + 0.5 * rs.randint(0, 2),
+            shape[1] // 2 + rs.randint(-6, 7) + 0.5 * rs.randint(0, 2),
+        )
+        pattern = _symmetric(shape, centre, seed=k)
+        assert np.array_equal(SymmOffset(pattern, device=device), _symm_offset_skimage(pattern))

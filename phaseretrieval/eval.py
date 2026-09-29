@@ -29,6 +29,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from numpy.linalg import svd
+from scipy.fft import next_fast_len
 from scipy.ndimage import fourier_shift
 from skimage.registration import phase_cross_correlation
 from torch import Tensor
@@ -241,7 +242,7 @@ def EigenMode(
     return modes[:k], s[:k], approx
 
 
-def SymmOffset(input: np.ndarray) -> np.ndarray:
+def SymmOffset(input: np.ndarray, device: str | torch.device | None = None) -> np.ndarray:
     """Find the offset of the centre of symmetry of a diffraction pattern from the array centre.
 
     The diffraction intensity of a real object is centrosymmetric about the zero frequency,
@@ -249,7 +250,9 @@ def SymmOffset(input: np.ndarray) -> np.ndarray:
     of symmetry ``c``. Rotating the pattern by 180 degrees about a point ``p`` moves ``c`` to
     ``2 p - c``; the shift ``s = 2 (c - p)`` that registers the rotated pattern with the
     original therefore gives ``c = p + s / 2``. The shift is found with pixel precision by
-    phase cross-correlation, ignoring missing (NaN) pixels.
+    masked normalized cross-correlation [1]_, ignoring missing (NaN) pixels, as in
+    ``skimage.registration.phase_cross_correlation`` with masks, computed with PyTorch in
+    float64 (on the GPU if there is one).
 
     The offset is measured from index ``(H // 2, W // 2)``, the position of the zero
     frequency after `numpy.fft.fftshift`, for both odd and even sizes: the pattern is centred
@@ -261,6 +264,8 @@ def SymmOffset(input: np.ndarray) -> np.ndarray:
     input : numpy.ndarray
         Intensity of shape ``(H, W)``, NaN for missing pixels. The centre of symmetry must lie
         inside the array, and enough of the pattern must overlap with its rotation.
+    device : str or torch.device, optional
+        Device of the computation; by default the GPU if there is one, else the CPU.
 
     Returns
     -------
@@ -268,20 +273,73 @@ def SymmOffset(input: np.ndarray) -> np.ndarray:
         Integer offset ``(di, dj)``: the centre of symmetry is at ``(H // 2 + di, W // 2 + dj)``.
         A centre halfway between two pixels (half-integer offset) is rounded toward zero, i.e.
         toward the array centre.
+
+    References
+    ----------
+    .. [1] D. Padfield, Masked object registration in the Fourier domain, IEEE Trans. Image
+       Process. 21, 2706 (2012), https://doi.org/10.1109/TIP.2011.2181402
     """
-    rotated = np.rot90(input, 2)  # 180-degree rotation about p = ((H - 1) / 2, (W - 1) / 2)
-    result = phase_cross_correlation(
-        input,
-        rotated,
-        reference_mask=~np.isnan(input),
-        moving_mask=~np.isnan(rotated),
-        upsample_factor=1,
-    )
-    shift = result[0] if isinstance(result, tuple) else result  # scikit-image < 0.22: shift only
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    reference = torch.as_tensor(np.ascontiguousarray(input), dtype=torch.float64, device=device)
+    rotated = torch.flip(reference, dims=(0, 1))  # rotation about p = ((H - 1) / 2, (W - 1) / 2)
+    xcorr = _masked_xcorr(rotated, reference, ~torch.isnan(rotated), ~torch.isnan(reference))
+    # average of equal maxima, as in scikit-image
+    center = torch.nonzero(xcorr == xcorr.max()).double().mean(dim=0).cpu().numpy()
+    shift = np.array(input.shape) - 1 - center
     # c - (H // 2, W // 2) = s / 2 + p - (H // 2, W // 2), where p - (H // 2, W // 2) is -1/2 for
     # even and 0 for odd sizes
     parity = 1 - np.asarray(input.shape) % 2
     return np.trunc((shift - parity) / 2).astype(int)
+
+
+def _masked_xcorr(
+    fixed: Tensor, moving: Tensor, fixed_mask: Tensor, moving_mask: Tensor, overlap_ratio=0.3
+) -> Tensor:
+    """Masked normalized cross-correlation of two 2-D images ('full' mode), after Padfield.
+
+    A PyTorch port of ``skimage.registration._masked_phase_cross_correlation
+    .cross_correlate_masked`` with the same padding to fast FFT sizes; positions where the
+    masks overlap by less than ``overlap_ratio`` of the maximum overlap are set to zero.
+    """
+    eps = torch.finfo(torch.float64).eps
+    final_shape = [a + b - 1 for a, b in zip(fixed.shape, moving.shape)]
+    fast_shape = [next_fast_len(n) for n in final_shape]
+
+    def fft(x):
+        return torch.fft.fftn(x, s=fast_shape)
+
+    def ifft(x):
+        return torch.fft.ifftn(x, s=fast_shape).real
+
+    fixed = torch.where(fixed_mask, fixed, 0.0)
+    moving = torch.where(moving_mask, moving, 0.0)
+    rotated_moving = torch.flip(moving, dims=(0, 1))
+    rotated_moving_mask = torch.flip(moving_mask, dims=(0, 1))
+
+    fixed_fft = fft(fixed)
+    rotated_moving_fft = fft(rotated_moving)
+    fixed_mask_fft = fft(fixed_mask.double())
+    rotated_moving_mask_fft = fft(rotated_moving_mask.double())
+
+    overlap = ifft(rotated_moving_mask_fft * fixed_mask_fft).round().clamp(min=eps)
+    correlated_fixed = ifft(rotated_moving_mask_fft * fixed_fft)
+    correlated_moving = ifft(fixed_mask_fft * rotated_moving_fft)
+    numerator = (
+        ifft(rotated_moving_fft * fixed_fft) - correlated_fixed * correlated_moving / overlap
+    )
+    fixed_denom = ifft(rotated_moving_mask_fft * fft(fixed.square()))
+    fixed_denom = (fixed_denom - correlated_fixed.square() / overlap).clamp(min=0)
+    moving_denom = ifft(fixed_mask_fft * fft(rotated_moving.square()))
+    moving_denom = (moving_denom - correlated_moving.square() / overlap).clamp(min=0)
+    denom = torch.sqrt(fixed_denom * moving_denom)
+
+    crop = (slice(0, final_shape[0]), slice(0, final_shape[1]))
+    numerator, denom, overlap = numerator[crop], denom[crop], overlap[crop]
+    tol = 1e3 * eps * denom.abs().max()
+    out = torch.where(denom > tol, numerator / torch.where(denom > tol, denom, 1.0), 0.0)
+    out = out.clamp(-1, 1)
+    return torch.where(overlap < overlap_ratio * overlap.max(), 0.0, out)
 
 
 def AlignObject(input: Tensor, target: Tensor | None = None) -> Tensor:
