@@ -94,7 +94,7 @@ value of the true object itself. The parameters of every algorithm are described
 docstring of `PhaseRetrieval` (`help(PhaseRetrieval)`), and the same dictionary can be passed to
 the constructor and to the call.
 
-Iterators can be connected in series. With `continue_=True`, a call also returns a state
+Iterators can be connected in series. With `continue_out=True`, a call also returns a state
 (best iterates, or the last ones with `continue_from="last"`, support after ShrinkWrap,
 ShrinkWrap sigma and the errors of all connected calls in `state["path"]`), from which the
 same or another iterator continues. For example, HIO with ShrinkWrap followed by GPS-R on the updated support,
@@ -115,7 +115,7 @@ hio_params = {
     "interval": 50,
 }
 hio = PhaseRetrieval(amplitude, support, unknown, **hio_params).to(device)
-_, _, state = hio(500, initial_phase, continue_=True, **hio_params)
+_, _, state = hio(500, initial_phase, continue_out=True, **hio_params)
 output, path = iterator(1000, state, **info)  # starts from the HIO results and support
 ```
 

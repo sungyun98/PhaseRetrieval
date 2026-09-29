@@ -69,10 +69,10 @@ def _worker(
         paths = []
         with torch.no_grad():
             for k, (iterator, (iteration, params)) in enumerate(zip(iterators, stages)):
-                params = {key: v for key, v in params.items() if key != "continue_"}
+                params = {key: v for key, v in params.items() if key != "continue_out"}
                 last = k == len(stages) - 1
                 result = iterator(
-                    iteration, start_state, toggle=toggle and last, continue_=not last, **params
+                    iteration, start_state, toggle=toggle and last, continue_out=not last, **params
                 )
                 paths.append(result[1])
                 if not last:
@@ -96,7 +96,7 @@ def ReconstructParallel(
 
     The reconstructions are split into batches of ``batch_size``; each device, in a process
     of its own, reconstructs every ``len(devices)``-th batch. Each batch runs through the
-    ``stages`` in series (see `PhaseRetrieval`, ``continue_``): every stage starts from the
+    ``stages`` in series (see `PhaseRetrieval`, ``continue_out``): every stage starts from the
     state left by the previous one. The random initial phases depend only on ``seed`` and the
     batch index, so the results do not depend on the number of devices.
 

@@ -536,12 +536,12 @@ class PhaseRetrieval(nn.Module):
     iterate with the lowest error. Whenever a scheduled parameter changes, the iteration
     restarts from the best iterate so far.
 
-    Iterators can be connected in series: with ``continue_=True``, `forward` also returns a
+    Iterators can be connected in series: with ``continue_out=True``, `forward` also returns a
     state (best iterates, support, ShrinkWrap sigma and the errors so far) from which the same
     or another iterator, e.g. with another algorithm or other parameters, continues::
 
-        output, path, state = hio(1000, initial_phase, continue_=True, **hio_params)
-        output, path, state = gps(1000, state, continue_=True, **gps_params)
+        output, path, state = hio(1000, initial_phase, continue_out=True, **hio_params)
+        output, path, state = gps(1000, state, continue_out=True, **gps_params)
         full_path = state["path"]  # errors of all 2000 iterations
 
     Supported algorithms (``algorithm``):
@@ -779,7 +779,7 @@ class PhaseRetrieval(nn.Module):
         iteration: int,
         initial_phase: Tensor | dict[str, Tensor],
         toggle: bool = False,
-        continue_: bool = False,
+        continue_out: bool = False,
         continue_from: str = "best",
         **kwargs: Any,
     ) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, dict[str, Tensor]]:
@@ -792,16 +792,15 @@ class PhaseRetrieval(nn.Module):
         initial_phase : torch.Tensor or dict
             Complex tensor ``exp(i * theta)`` of shape ``(N, 1, H, W)``; ``theta`` is usually
             drawn uniformly from ``[0, 2 * pi)``. ``N`` sets the number of reconstructions.
-            Alternatively, the state returned by a previous call with ``continue_=True``, of
+            Alternatively, the state returned by a previous call with ``continue_out=True``, of
             this or another iterator on the same data: the iteration then starts from the
             iterates, the support and (see ``sigma_continue``) the ShrinkWrap sigma of that call.
             HIO, RAAR, gRAAR and dRAAR start from ``u = ifft2(z)``, GPS and dpGPS from ``z``
             and ``y``.
         toggle : bool, default False
             If True, return the k-space result without projection on the support constraint.
-        continue_ : bool, default False
-            If True, also return the state from which a following call continues. (The
-            trailing underscore avoids the Python keyword ``continue``.)
+        continue_out : bool, default False
+            If True, also return the state from which a following call continues.
         continue_from : {'best', 'last'}, default 'best'
             Iterates handed on in the state: the best ones, as in the output, or those of the
             last iteration. The support is the current one in both cases: the last ShrinkWrap
@@ -833,7 +832,7 @@ class PhaseRetrieval(nn.Module):
         path : torch.Tensor
             Real tensor of shape ``(N, iteration)``: error after each iteration.
         state : dict of torch.Tensor
-            Returned only if ``continue_`` is True, with the keys:
+            Returned only if ``continue_out`` is True, with the keys:
 
             * ``'z'``: complex k-space iterates (best or last, see ``continue_from``), shape
               ``(N, 1, H, W)``, not fftshifted (``fft2(u)`` for HIO, RAAR, gRAAR and dRAAR);
@@ -1011,7 +1010,7 @@ class PhaseRetrieval(nn.Module):
         else:
             raise ValueError("iteration must be at least 1.")
 
-        if not continue_:
+        if not continue_out:
             return output, path
 
         # hand on the best (default) or the last iterates, with the current support
