@@ -69,10 +69,15 @@ class GaussianFilter(nn.Module):
         Returns
         -------
         torch.Tensor
-            Real tensor of shape ``(1, 1, H, W)``.
+            Real tensor of shape ``(1, 1, H, W)``. Filters are cached per ``alpha``, device and
+            dtype, since ``alpha`` only changes with the frequency filter schedule.
         """
-        filter = torch.exp(-0.5 * self.mesh / alpha**2)
-        return filter / filter.max()
+        key = (alpha, self.mesh.device, self.mesh.dtype)
+        cache = self.__dict__.setdefault("_cache", {})
+        if key not in cache:
+            filter = torch.exp(-0.5 * self.mesh / alpha**2)
+            cache[key] = filter / filter.max()
+        return cache[key]
 
 
 class ShrinkWrap(GaussianFilter):
@@ -257,6 +262,8 @@ class PhaseRetrievalUnit(nn.Module):
         if type in ["dpGPS-R", "dpGPS-F"]:
             kernel = kwargs.pop("preconditioner")
             self.register_buffer("kernel", kernel)
+            # step size of the dual update, constant: computed once, not in every iteration
+            self.gamma = (2 * kernel.min().pow(2) / kernel.max()).item()
 
     def updateSupport(self, support: Tensor) -> None:
         """Replace the support constraint.
@@ -397,7 +404,12 @@ class PhaseRetrievalUnit(nn.Module):
 
         if type == "R":
             y = fft2(self.projS(y, True))
-            y = y * ifftshift(self.filter(alpha / math.sqrt(param)))
+            width = alpha / math.sqrt(param)
+            key = (width, y.device)
+            cache = self.__dict__.setdefault("_shifted_filters", {})
+            if key not in cache:
+                cache[key] = ifftshift(self.filter(width))
+            y = y * cache[key]
             y = ifft2(y)
         elif type == "F":
             y = self.projS(y, True) * self.filter(2 * math.pi * alpha / math.sqrt(param))
@@ -476,12 +488,15 @@ class PhaseRetrievalUnit(nn.Module):
 
             if not toggle:
                 if self.type == "RAAR":
-                    # RAAR
-                    un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * self.projM(u)
+                    # RAAR (reflM(u) = 2 * projM(u) - u)
+                    pm = self.projM(u)
+                    un = 0.5 * beta * (self.reflS(2 * pm - u) + u) + (1 - beta) * pm
                 elif self.type in ["gRAAR", "dRAAR"]:
-                    # gRAAR or dRAAR
-                    z = self.projT(fft2(u), True)
-                    un = 0.5 * beta * (self.reflS(self.reflM(u)) + u) + (1 - beta) * ifft2(z)
+                    # gRAAR or dRAAR, with one FFT of u for both projections
+                    fu = fft2(u)
+                    pm = ifft2(self.projT(fu))
+                    z = self.projT(fu, True)
+                    un = 0.5 * beta * (self.reflS(2 * pm - u) + u) + (1 - beta) * ifft2(z)
             else:
                 un = self.projM(u)
                 # get intersection of support constraint and positivity
@@ -511,7 +526,7 @@ class PhaseRetrievalUnit(nn.Module):
             y = kwargs.pop("y")
             sigma = kwargs.pop("sigma")
             alpha = kwargs.pop("alpha")
-            gamma = (2 * self.kernel.min().pow(2) / self.kernel.max()).item()
+            gamma = self.gamma
             type = "R" if self.type == "dpGPS-R" else "F"
             # dpGPS with sigma condition
             if sigma < 1:
@@ -928,8 +943,8 @@ class PhaseRetrieval(nn.Module):
                 path[:, n] = error
                 # update best
                 trigger = torch.le(error, error_min if n > 0 else error)
-                error_min[trigger] = error[trigger]
-                u_best[trigger, :, :, :] = var["u"][trigger, :, :, :]
+                error_min = torch.where(trigger, error, error_min)
+                torch.where(trigger[:, None, None, None], var["u"], u_best, out=u_best)
 
             elif self.algorithm in ["GPS-R", "GPS-F", "dpGPS-R", "dpGPS-F"]:
                 # initialize
@@ -976,9 +991,9 @@ class PhaseRetrieval(nn.Module):
                 path[:, n] = error
                 # update best
                 trigger = torch.le(error, error_min if n > 0 else error)
-                error_min[trigger] = error[trigger]
-                z_best[trigger, :, :, :] = var["z"][trigger, :, :, :]
-                y_best[trigger, :, :, :] = var["y"][trigger, :, :, :]
+                error_min = torch.where(trigger, error, error_min)
+                torch.where(trigger[:, None, None, None], var["z"], z_best, out=z_best)
+                torch.where(trigger[:, None, None, None], var["y"], y_best, out=y_best)
 
             else:
                 raise ValueError(f"{self.algorithm} is not supported for phase retrieval.")
