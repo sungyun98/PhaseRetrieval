@@ -1,0 +1,30 @@
+{
+ "meta": {
+  "case": "preconditioner",
+  "adapter": "pr_legacy",
+  "code": "v1.0-legacy (1f79e61cb0baa3e54b63e86c354d3ebd554cf8ca)",
+  "precision": "float64",
+  "environment": {
+   "python": "3.7.12",
+   "platform": "Linux-5.14.0-570.17.1.el9_6.x86_64-x86_64-with-redhat-9.6-Blue_Onyx",
+   "numpy": "1.19.5",
+   "scipy": "1.5.3",
+   "skimage": "0.18.1",
+   "torch": "1.6.0+cpu",
+   "PIL": "9.2.0"
+  },
+  "f32_reference_rel_error": {
+   "kernel_deep_limit0.28": 2.179841120579514e-07,
+   "kernel_nondeep_limit0.28": 3.108576385383704e-08,
+   "kernel_deep_nolimit": 2.7709009936549285e-07,
+   "denoised_limit0.28": 6.003475824081555e-07
+  }
+ },
+ "values": {},
+ "arrays": [
+  "denoised_limit0.28",
+  "kernel_deep_limit0.28",
+  "kernel_deep_nolimit",
+  "kernel_nondeep_limit0.28"
+ ]
+}

@@ -1,0 +1,236 @@
+"""Unit tests of the series connection of PhaseRetrieval iterators (continue_out=True)."""
+
+import math
+
+import pytest
+import torch
+from test_algorithms import _data, _phase
+
+from phaseretrieval import PhaseRetrieval, ReconstructParallel
+
+HIO = dict(algorithm="HIO", error="R", beta=0.9, beta_type="const", boundary_push=0)
+GPS = dict(algorithm="GPS-R", error="R", sigma=(0, 0.1, 0.5, 1), alpha_count=3, t=1, s=0.9)
+SW = dict(shrinkwrap=True, sigma_initial=3, sigma_limit=1.5, ratio_update=0.05, threshold=0.1)
+
+
+def _state_from_phase(amplitude, support, phase):
+    """The state that is equivalent to starting from initial phases."""
+    z = amplitude * phase
+    n = phase.size(0)
+    return {
+        "z": z,
+        "y": torch.zeros_like(z),
+        "support": support.expand(n, -1, -1, -1).clone(),
+        "sigma": torch.full((n,), math.nan, dtype=torch.float64),
+    }
+
+
+@pytest.mark.parametrize("params", [HIO, GPS])
+def test_start_from_state_equals_start_from_phase(params):
+    amplitude, support, unknown = _data()
+    phase = _phase(3)
+    iterator = PhaseRetrieval(amplitude, support, unknown, **params)
+    out_phase, path_phase = iterator(20, phase, **params)
+    state = _state_from_phase(amplitude, support, phase)
+    before = {k: v.clone() for k, v in state.items()}
+    out_state, path_state = iterator(20, state, **params)
+    assert torch.equal(out_phase, out_state) and torch.equal(path_phase, path_state)
+    assert all(torch.equal(before[k], state[k]) or k == "sigma" for k in state)  # not modified
+
+
+@pytest.mark.parametrize("params", [HIO, GPS])
+def test_state_contents(params):
+    amplitude, support, unknown = _data()
+    iterator = PhaseRetrieval(amplitude, support, unknown, **params)
+    output, path, state = iterator(20, _phase(3), continue_out=True, **params)
+    assert set(state) == {"z", "y", "support", "sigma", "error", "path"}
+    assert state["z"].shape == state["y"].shape == state["support"].shape == (3, 1, 64, 64)
+    assert state["z"].is_complex() and torch.isnan(state["sigma"]).all()
+    assert torch.equal(state["error"], path.min(dim=1).values)
+    # the output is the best iterate projected on the support (HIO: z = fft2(u), exact up to
+    # rounding)
+    projected = iterator.getAmplitude(z=state["z"], toggle=True)
+    assert torch.allclose(output, projected, rtol=1e-5, atol=1e-6 * output.abs().max())
+    if params["algorithm"] == "HIO":
+        assert not state["y"].any()
+
+
+def test_chain_across_algorithms_keeps_improving():
+    amplitude, support, unknown = _data()
+    hio = PhaseRetrieval(amplitude, support, unknown, **HIO)
+    gps = PhaseRetrieval(amplitude, support, unknown, **GPS)
+    _, path1, state = hio(30, _phase(2), continue_out=True, **HIO)
+    _, path2, state = gps(30, state, continue_out=True, **GPS)
+    _, path3 = hio(30, state, **HIO)
+    assert path1.shape == path2.shape == path3.shape == (2, 30)
+    assert torch.all(torch.isfinite(path3))
+
+
+def test_shrinkwrap_continues_support_and_sigma():
+    amplitude, support, unknown = _data()
+    params = dict(HIO, interval=5, **SW)
+    iterator = PhaseRetrieval(amplitude, support, unknown, **params)
+    _, _, first = iterator(30, _phase(2), continue_out=True, **params)
+    sigma1 = first["sigma"][0].item()
+    assert sigma1 == pytest.approx(3 * 0.95**5) and torch.all(first["sigma"] == sigma1)
+    assert not torch.equal(first["support"], support.expand(2, -1, -1, -1))
+
+    # continuing: 4 iterations do not update the support, so it is handed on unchanged
+    _, _, second = iterator(4, first, continue_out=True, **params)
+    assert torch.equal(second["support"], first["support"])
+    assert second["sigma"][0].item() == sigma1
+    _, _, third = iterator(30, second, continue_out=True, **params)
+    assert third["sigma"][0].item() == pytest.approx(sigma1 * 0.95**5)
+
+    # a fresh call starts again from the initial support and sigma_current
+    _, _, fresh = iterator(30, _phase(2), continue_out=True, **params)
+    assert torch.equal(fresh["sigma"], first["sigma"]) and torch.equal(
+        fresh["support"], first["support"]
+    )
+
+
+def test_sigma_continue_false_and_sigma_current():
+    amplitude, support, unknown = _data()
+    params = dict(HIO, interval=5, **SW)
+    _, _, state = PhaseRetrieval(amplitude, support, unknown, **params)(
+        30, _phase(2), continue_out=True, **params
+    )
+    restart = dict(params, sigma_current=2.0, sigma_continue=False)
+    iterator = PhaseRetrieval(amplitude, support, unknown, **restart)
+    _, _, out = iterator(4, state, continue_out=True, **restart)
+    assert out["sigma"][0].item() == 2.0
+    with pytest.raises(ValueError):
+        PhaseRetrieval(amplitude, support, unknown, **dict(params, sigma_current=3.5))
+    with pytest.raises(ValueError):  # the state's sigma exceeds sigma_initial
+        smaller = dict(params, sigma_initial=2, sigma_limit=1)
+        PhaseRetrieval(amplitude, support, unknown, **smaller)(
+            4, dict(state, sigma=state["sigma"] * 0 + 2.5), **smaller
+        )
+
+
+def test_sigma_passes_through_a_stage_without_shrinkwrap():
+    amplitude, support, unknown = _data()
+    params = dict(HIO, interval=5, **SW)
+    _, _, state = PhaseRetrieval(amplitude, support, unknown, **params)(
+        30, _phase(2), continue_out=True, **params
+    )
+    _, _, state2 = PhaseRetrieval(amplitude, support, unknown, **GPS)(
+        10, state, continue_out=True, **GPS
+    )
+    assert torch.equal(state2["sigma"], state["sigma"])
+    assert torch.equal(state2["support"], state["support"])
+
+
+def test_full_error_path_over_three_stages():
+    amplitude, support, unknown = _data()
+    hio = PhaseRetrieval(amplitude, support, unknown, **HIO)
+    gps = PhaseRetrieval(amplitude, support, unknown, **GPS)
+    _, p1, s1 = hio(20, _phase(2), continue_out=True, **HIO)
+    _, p2, s2 = gps(30, s1, continue_out=True, **GPS)
+    _, p3, s3 = hio(10, s2, continue_out=True, **HIO)
+    assert torch.equal(s1["path"], p1)
+    assert torch.equal(s3["path"], torch.cat((p1, p2, p3), dim=1))
+
+
+@pytest.mark.parametrize("params", [HIO, GPS])
+def test_continue_from_last(params):
+    amplitude, support, unknown = _data()
+    iterator = PhaseRetrieval(amplitude, support, unknown, **params)
+    phase = _phase(3)
+    _, path, best = iterator(15, phase, continue_out=True, **params)
+    _, _, last = iterator(15, phase, continue_out=True, continue_from="last", **params)
+    assert torch.equal(best["error"], path.min(dim=1).values)
+    assert torch.equal(last["error"], path[:, -1])
+    # the last iterate reproduces the last error
+    amp = iterator.getAmplitude(z=last["z"])
+    assert torch.allclose(iterator.getError(amp), last["error"], rtol=1e-5)
+    with pytest.raises(ValueError):
+        iterator(2, phase, continue_out=True, continue_from="first", **params)
+
+
+def test_reconstruct_parallel_matches_manual_chain():
+    amplitude, support, unknown = _data()
+    stages = [(20, dict(HIO, interval=5, **SW)), (20, GPS)]
+    out1, path1 = ReconstructParallel(
+        amplitude, support, unknown, stages, n_seeds=5, batch_size=2, devices=["cpu"]
+    )
+    out2, path2 = ReconstructParallel(
+        amplitude, support, unknown, stages, n_seeds=5, batch_size=2, devices=["cpu", "cpu"]
+    )
+    assert out1.shape == (5, 1, 64, 64) and path1.shape == (5, 40)
+    assert torch.equal(out1, out2) and torch.equal(path1, path2)  # independent of the devices
+    # the same chain by hand for the first batch (seeds 0 and 1)
+    from phaseretrieval.parallel import _initial_phase
+
+    first = PhaseRetrieval(amplitude, support, unknown, **stages[0][1])
+    second = PhaseRetrieval(amplitude, support, unknown, **GPS)
+    _, _, state = first(20, _initial_phase(0, 0, 2, 64, 64), continue_out=True, **stages[0][1])
+    out, _, state = second(20, state, continue_out=True, **GPS)
+    assert torch.equal(out1[:2], out) and torch.equal(path1[:2], state["path"])
+
+
+@pytest.mark.parametrize("params", [HIO, GPS])
+def test_error_interval(params):
+    amplitude, support, unknown = _data()
+    if "sigma" in params:  # constant parameters: no restart from the best iterate after n = 0
+        params = dict(params, sigma=0.5, alpha_count=1)
+    iterator = PhaseRetrieval(amplitude, support, unknown, **params)
+    phase = _phase(3)
+    out1, path1, state1 = iterator(23, phase, continue_out=True, **params)
+    out5, path5, state5 = iterator(23, phase, continue_out=True, **dict(params, error_interval=5))
+    checked = [4, 9, 14, 19, 22]
+    assert torch.equal(path5[:, checked], path1[:, checked])  # same iterates
+    mask = torch.ones(23, dtype=torch.bool)
+    mask[checked] = False
+    assert torch.isnan(path5[:, mask]).all()
+    assert torch.equal(state5["error"], path1[:, checked].min(dim=1).values)
+    with pytest.raises(ValueError):
+        iterator(3, phase, **dict(params, error_interval=0))
+
+
+def test_reconstruct_parallel_with_torchrun(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    result = tmp_path / "result.pt"
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", PYTHONPATH=os.pathsep.join(sys.path))
+    command = [sys.executable, "-m", "torch.distributed.run", "--standalone"]
+    command += ["--nproc_per_node=2", os.path.join(os.path.dirname(__file__), "parallel_script.py")]
+    subprocess.run(command + [str(result)], check=True, env=env, capture_output=True, timeout=600)
+    distributed = torch.load(result, weights_only=True)
+    amplitude, support, unknown = _data()
+    HIO = dict(algorithm="HIO", error="R", beta=0.9, beta_type="const", boundary_push=0.1)
+    output, path = ReconstructParallel(
+        amplitude,
+        support,
+        unknown,
+        [(15, HIO), (15, GPS)],
+        n_seeds=7,
+        batch_size=2,
+        devices=["cpu"],
+    )
+    assert torch.equal(distributed["output"], output) and torch.equal(distributed["path"], path)
+
+
+def test_optimal_batch_size():
+    from phaseretrieval import OptimalBatchSize
+
+    l2 = 96 * 2**20  # RTX 6000 Ada, where the rule was measured
+    assert [OptimalBatchSize(s, s, l2_cache=l2) for s in (256, 512, 1024, 4096)] == [32, 8, 2, 1]
+    assert OptimalBatchSize(512, 512, l2_cache=l2, dtype=torch.complex128) == 4
+    assert OptimalBatchSize(512, 512, device="cpu") == 8
+    if torch.cuda.is_available():
+        l2_gpu = torch.cuda.get_device_properties(0).L2_cache_size
+        assert OptimalBatchSize(512, 512, "cuda:0") == max(1, l2_gpu // (6 * 512 * 512 * 8))
+
+
+def test_results_do_not_depend_on_the_batch_size():
+    amplitude, support, unknown = _data()
+    stages = [(10, dict(HIO, interval=5, **SW)), (10, GPS)]
+    runs = [
+        ReconstructParallel(amplitude, support, unknown, stages, 5, batch_size=b, devices=["cpu"])
+        for b in (1, 2, 5)
+    ]
+    for output, path in runs[1:]:
+        assert torch.equal(output, runs[0][0]) and torch.equal(path, runs[0][1])

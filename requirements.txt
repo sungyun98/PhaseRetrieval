@@ -1,0 +1,13 @@
+# Tested versions (Python 3.12). PyTorch comes from the CUDA 12.6 index, which runs with
+# NVIDIA drivers >= 525; the default PyPI build of torch 2.14 needs CUDA 13 (driver >= 580).
+# For CPU only, replace cu126 with cpu.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.14.0
+numpy==2.5.3
+scipy==1.18.1
+scikit-image==0.26.0
+tqdm==4.70.1
+# notebooks and tests
+matplotlib==3.11.2
+jupyterlab==4.6.4
+pytest==9.1.1
