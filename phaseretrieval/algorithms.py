@@ -536,12 +536,13 @@ class PhaseRetrieval(nn.Module):
     iterate with the lowest error. Whenever a scheduled parameter changes, the iteration
     restarts from the best iterate so far.
 
-    Iterators can be connected in series: with ``continuous=True``, `forward` also returns a
-    state (best iterates, support and ShrinkWrap sigma) from which the same or another
-    iterator, e.g. with another algorithm or other parameters, continues::
+    Iterators can be connected in series: with ``continue_=True``, `forward` also returns a
+    state (best iterates, support, ShrinkWrap sigma and the errors so far) from which the same
+    or another iterator, e.g. with another algorithm or other parameters, continues::
 
-        output, path, state = hio(1000, initial_phase, continuous=True, **hio_params)
-        output, path = gps(1000, state, **gps_params)
+        output, path, state = hio(1000, initial_phase, continue_=True, **hio_params)
+        output, path, state = gps(1000, state, continue_=True, **gps_params)
+        full_path = state["path"]  # errors of all 2000 iterations
 
     Supported algorithms (``algorithm``):
 
@@ -778,7 +779,8 @@ class PhaseRetrieval(nn.Module):
         iteration: int,
         initial_phase: Tensor | dict[str, Tensor],
         toggle: bool = False,
-        continuous: bool = False,
+        continue_: bool = False,
+        continue_from: str = "best",
         **kwargs: Any,
     ) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, dict[str, Tensor]]:
         """Run the phase retrieval algorithm.
@@ -790,15 +792,20 @@ class PhaseRetrieval(nn.Module):
         initial_phase : torch.Tensor or dict
             Complex tensor ``exp(i * theta)`` of shape ``(N, 1, H, W)``; ``theta`` is usually
             drawn uniformly from ``[0, 2 * pi)``. ``N`` sets the number of reconstructions.
-            Alternatively, the state returned by a previous call with ``continuous=True``, of
-            this or another iterator on the same data: the iteration then starts from the best
+            Alternatively, the state returned by a previous call with ``continue_=True``, of
+            this or another iterator on the same data: the iteration then starts from the
             iterates, the support and (see ``sigma_continue``) the ShrinkWrap sigma of that call.
             HIO, RAAR, gRAAR and dRAAR start from ``u = ifft2(z)``, GPS and dpGPS from ``z``
             and ``y``.
         toggle : bool, default False
             If True, return the k-space result without projection on the support constraint.
-        continuous : bool, default False
-            If True, also return the state from which a following call continues.
+        continue_ : bool, default False
+            If True, also return the state from which a following call continues. (The
+            trailing underscore avoids the Python keyword ``continue``.)
+        continue_from : {'best', 'last'}, default 'best'
+            Iterates handed on in the state: the best ones, as in the output, or those of the
+            last iteration. The support is the current one in both cases: the last ShrinkWrap
+            update, computed from the best iterates, or the initial support.
         **kwargs
             Keyword arguments listed below; other keywords are ignored.
 
@@ -826,16 +833,18 @@ class PhaseRetrieval(nn.Module):
         path : torch.Tensor
             Real tensor of shape ``(N, iteration)``: error after each iteration.
         state : dict of torch.Tensor
-            Returned only if ``continuous`` is True, with the keys:
+            Returned only if ``continue_`` is True, with the keys:
 
-            * ``'z'``: complex best k-space iterates, shape ``(N, 1, H, W)``, not fftshifted
-              (``fft2(u)`` for HIO, RAAR, gRAAR and dRAAR);
+            * ``'z'``: complex k-space iterates (best or last, see ``continue_from``), shape
+              ``(N, 1, H, W)``, not fftshifted (``fft2(u)`` for HIO, RAAR, gRAAR and dRAAR);
             * ``'y'``: complex Lagrange multipliers of GPS and dpGPS, shape ``(N, 1, H, W)``
               (zeros for the other algorithms);
             * ``'support'``: support at the end of the call, shape ``(N, 1, H, W)``;
             * ``'sigma'``: float64 ShrinkWrap sigma at the end of the call, shape ``(N,)``
               (the incoming one if this iterator has no ShrinkWrap, NaN if none);
-            * ``'error'``: error of the best iterates, shape ``(N,)``.
+            * ``'error'``: error of the handed-on iterates, shape ``(N,)``;
+            * ``'path'``: errors of all iterations of this and the previous connected calls,
+              shape ``(N, total iterations)`` (the error metrics of the stages may differ).
 
             All tensors have ``N`` as first dimension, so that `torch.nn.DataParallel` can
             split and gather them.
@@ -843,9 +852,12 @@ class PhaseRetrieval(nn.Module):
         Raises
         ------
         ValueError
-            If the algorithm, error metric, ``beta_type`` or a schedule is not supported,
-            ``iteration`` is less than 1, or the sigma of the state exceeds ``sigma_initial``.
+            If the algorithm, error metric, ``beta_type``, a schedule or ``continue_from`` is not
+            supported, ``iteration`` is less than 1, or the sigma of the state exceeds
+            ``sigma_initial``.
         """
+        if continue_from not in ("best", "last"):
+            raise ValueError(f"continue_from must be 'best' or 'last', not {continue_from!r}.")
         state = initial_phase if isinstance(initial_phase, dict) else None
         if state is None:
             z_start = self.magnitude * initial_phase
@@ -999,16 +1011,26 @@ class PhaseRetrieval(nn.Module):
         else:
             raise ValueError("iteration must be at least 1.")
 
-        if not continuous:
+        if not continue_:
             return output, path
 
-        if z_best is None:
-            z_best = fft2(u_best)
-            y_best = torch.zeros_like(z_best)
+        # hand on the best (default) or the last iterates, with the current support
+        if continue_from == "best":
+            z_next = z_best if z_best is not None else fft2(u_best)
+            y_next = y_best if y_best is not None else torch.zeros_like(z_next)
+            error_next = error_min
+        else:
+            z_next = var["z"] if "z" in var else fft2(var["u"])
+            y_next = var["y"] if "y" in var else torch.zeros_like(z_next)
+            error_next = path[:, -1].clone()
+        if state is not None and "path" in state:
+            path_all = torch.cat((state["path"], path), dim=1)
+        else:
+            path_all = path.clone()
         sigma_out = self.shrink.sigma if self.shrinkwrap else sigma_in
         state = {
-            "z": z_best,
-            "y": y_best,
+            "z": z_next,
+            "y": y_next,
             "support": self.support.expand(size_batch, -1, -1, -1).clone(),
             "sigma": torch.full(
                 (size_batch,),
@@ -1016,6 +1038,7 @@ class PhaseRetrieval(nn.Module):
                 dtype=torch.float64,
                 device=device,
             ),
-            "error": error_min,
+            "error": error_next,
+            "path": path_all,
         }
         return output, path, state
