@@ -167,3 +167,22 @@ def test_reconstruct_parallel_matches_manual_chain():
     _, _, state = first(20, _initial_phase(0, 0, 2, 64, 64), continue_out=True, **stages[0][1])
     out, _, state = second(20, state, continue_out=True, **GPS)
     assert torch.equal(out1[:2], out) and torch.equal(path1[:2], state["path"])
+
+
+@pytest.mark.parametrize("params", [HIO, GPS])
+def test_error_interval(params):
+    amplitude, support, unknown = _data()
+    if "sigma" in params:  # constant parameters: no restart from the best iterate after n = 0
+        params = dict(params, sigma=0.5, alpha_count=1)
+    iterator = PhaseRetrieval(amplitude, support, unknown, **params)
+    phase = _phase(3)
+    out1, path1, state1 = iterator(23, phase, continue_out=True, **params)
+    out5, path5, state5 = iterator(23, phase, continue_out=True, **dict(params, error_interval=5))
+    checked = [4, 9, 14, 19, 22]
+    assert torch.equal(path5[:, checked], path1[:, checked])  # same iterates
+    mask = torch.ones(23, dtype=torch.bool)
+    mask[checked] = False
+    assert torch.isnan(path5[:, mask]).all()
+    assert torch.equal(state5["error"], path1[:, checked].min(dim=1).values)
+    with pytest.raises(ValueError):
+        iterator(3, phase, **dict(params, error_interval=0))
