@@ -131,6 +131,10 @@ torchrun --nnodes=2 --nproc_per_node=4 --node_rank=0 --rdzv-backend=c10d \
     --rdzv-endpoint=node01:29500 reconstruct.py   # node_rank=1 on the second machine
 ```
 
+Several patterns of the same size, stacked as `(P, 1, H, W)`, are reconstructed together with
+one reconstruction per pattern, which is much faster than one iterator per pattern (e.g. to
+refine many DPR results).
+
 Batches of 6 to 10 reconstructions per GPU are the fastest for 512 x 512 patterns (the default
 is 8), because their arrays fit in the L2 cache of the GPU. `error_interval=5` computes the
 error only every 5 iterations, which runs 1.4 to 1.5 times faster.
