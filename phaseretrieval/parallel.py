@@ -17,10 +17,11 @@ on one machine, or through `torch.distributed` when launched with ``torchrun`` o
 machines.
 """
 
-__all__ = ["ReconstructParallel"]
+__all__ = ["ReconstructParallel", "OptimalBatchSize"]
 
 import math
 import os
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -36,12 +37,69 @@ from .algorithms import PhaseRetrieval
 Stage = tuple[int, dict[str, Any]]
 
 
-def _initial_phase(seed: int, batch: int, n: int, h: int, w: int) -> Tensor:
-    """Random phase factors of one batch, independent of the number and order of the GPUs."""
-    state = np.random.SeedSequence([seed, batch]).generate_state(2, dtype=np.uint32)
-    generator = torch.Generator().manual_seed(int(state[0]) << 32 | int(state[1]))
-    theta = torch.rand(n, 1, h, w, generator=generator) * 2 * math.pi
+def _initial_phase(seed: int, start: int, n: int, h: int, w: int) -> Tensor:
+    """Random phase factors of reconstructions ``start`` to ``start + n - 1``.
+
+    Each reconstruction has its own generator, seeded by ``(seed, index)``, so the phases do
+    not depend on the batch size or on the number and order of the devices.
+    """
+    theta = torch.empty(n, 1, h, w)
+    for k in range(n):
+        state = np.random.SeedSequence([seed, start + k]).generate_state(2, dtype=np.uint32)
+        generator = torch.Generator().manual_seed(int(state[0]) << 32 | int(state[1]))
+        theta[k] = torch.rand(1, h, w, generator=generator) * 2 * math.pi
     return torch.polar(torch.ones_like(theta), theta)
+
+
+def OptimalBatchSize(
+    height: int,
+    width: int,
+    device: str | torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    l2_cache: int | None = None,
+) -> int:
+    """Return the batch size that reconstructs fastest on a GPU, from the size of its L2 cache.
+
+    The iterations are limited by memory bandwidth, and they run fastest when the arrays of a
+    batch stay in the L2 cache of the GPU. Measured on RTX 6000 Ada GPUs (96 MiB of L2 cache)
+    for HIO, GPS-R and dpGPS-F at 256 x 256, 512 x 512 and 1024 x 1024, the fastest batch was
+    always the one for which six complex arrays of the batch fill the cache::
+
+        batch = L2 cache / (6 * height * width * bytes per complex element)
+
+    i.e. 32, 8 and 2 reconstructions for these sizes; a batch four times larger took about
+    twice as long per reconstruction.
+
+    Parameters
+    ----------
+    height, width : int
+        Size of the patterns.
+    device : str or torch.device, optional
+        GPU to optimize for; by default the current CUDA device. On the CPU, 8 is returned.
+    dtype : torch.dtype, optional
+        Complex dtype of the iterates; by default complex64 (complex128 if the default dtype is
+        float64).
+    l2_cache : int, optional
+        L2 cache size in bytes, instead of the one of ``device``.
+
+    Returns
+    -------
+    int
+        Batch size, at least 1.
+    """
+    if dtype is None:
+        dtype = torch.complex128 if torch.get_default_dtype() == torch.float64 else torch.complex64
+    if l2_cache is None:
+        device = torch.device(device if device is not None else "cuda")
+        if device.type != "cuda" or not torch.cuda.is_available():
+            return 8
+        properties = torch.cuda.get_device_properties(device)
+        l2_cache = getattr(properties, "L2_cache_size", None)
+        if l2_cache is None:  # PyTorch before 2.4 does not report it
+            warnings.warn("the L2 cache size is unknown; assuming 32 MiB", stacklevel=2)
+            l2_cache = 32 * 2**20
+    element = torch.empty((), dtype=dtype).element_size()
+    return max(1, l2_cache // (6 * height * width * element))
 
 
 def _worker(
@@ -70,7 +128,7 @@ def _worker(
     for batch in range(rank, n_batches, len(devices)):
         start = batch * batch_size
         n = min(batch_size, n_seeds - start)
-        start_state = _initial_phase(seed, batch, n, h, w).to(device)
+        start_state = _initial_phase(seed, start, n, h, w).to(device)
         paths = []
         with torch.no_grad():
             for k, (iterator, (iteration, params)) in enumerate(zip(iterators, stages)):
@@ -92,7 +150,7 @@ def ReconstructParallel(
     unknown: Tensor,
     stages: Sequence[Stage],
     n_seeds: int,
-    batch_size: int = 8,
+    batch_size: int | None = None,
     seed: int = 0,
     devices: Sequence[int | str | torch.device] | None = None,
     toggle: bool = False,
@@ -102,9 +160,10 @@ def ReconstructParallel(
     The reconstructions are split into batches of ``batch_size``; each process, on a device
     of its own, reconstructs every ``n``-th batch, with ``n`` the number of processes. Each
     batch runs through the ``stages`` in series (see `PhaseRetrieval`, ``continue_out``):
-    every stage starts from the state left by the previous one. The random initial phases
-    depend only on ``seed`` and the batch index, so the results do not depend on the number
-    of devices.
+    every stage starts from the state left by the previous one. Each reconstruction has its
+    own random initial phase, which depends only on ``seed`` and its index, so the results do
+    not depend on the number of devices or on the batch size (on GPUs, the errors in ``path``
+    can differ in the last digits between batch sizes, since the order of the sums changes).
 
     Two ways to run:
 
@@ -118,10 +177,9 @@ def ReconstructParallel(
       over `torch.distributed` (a Gloo group). A process group is initialized (NCCL on GPUs,
       Gloo on CPUs) and destroyed again if none exists. ``devices`` must then be None.
 
-    Small batches run faster per reconstruction as long as the arrays of a batch fit in the
-    L2 cache of the GPU: on an RTX 6000 Ada at 512 x 512, 6 to 10 reconstructions per batch
-    were the fastest (``batch_size=8`` by default), and 32 took twice as long per
-    reconstruction. The workers print nothing.
+    Batches run fastest per reconstruction when their arrays fit in the L2 cache of the GPU;
+    by default the batch size is the smallest `OptimalBatchSize` of the devices. The workers
+    print nothing.
 
     Parameters
     ----------
@@ -134,8 +192,9 @@ def ReconstructParallel(
         ``[(500, hio_params), (1000, gps_params)]``. A stage may set ``continue_from``.
     n_seeds : int
         Number of reconstructions.
-    batch_size : int, default 8
-        Reconstructions per batch on one device.
+    batch_size : int, optional
+        Reconstructions per batch on one device; by default the smallest `OptimalBatchSize`
+        of the devices used (with torchrun, of all ranks).
     seed : int, default 0
         Seed of the random initial phases.
     devices : sequence of int, str or torch.device, optional
@@ -167,6 +226,8 @@ def ReconstructParallel(
     devices = [torch.device(f"cuda:{d}" if isinstance(d, int) else d) for d in devices]
     stages = [(int(iteration), dict(params)) for iteration, params in stages]
     h, w = input.shape[-2:]
+    if batch_size is None:
+        batch_size = min(OptimalBatchSize(h, w, device) for device in devices)
     dtype = torch.complex64 if toggle else torch.float32
     if torch.get_default_dtype() == torch.float64:
         dtype = torch.complex128 if toggle else torch.float64
@@ -197,7 +258,7 @@ def _reconstruct_distributed(
     unknown: Tensor,
     stages: Sequence[Stage],
     n_seeds: int,
-    batch_size: int,
+    batch_size: int | None,
     seed: int,
     toggle: bool,
 ) -> tuple[Tensor, Tensor] | tuple[None, None]:
@@ -214,6 +275,10 @@ def _reconstruct_distributed(
 
     stages = [(int(iteration), dict(params)) for iteration, params in stages]
     h, w = input.shape[-2:]
+    if batch_size is None:  # the same for all ranks: the smallest optimum
+        size = torch.tensor(OptimalBatchSize(h, w, device))
+        dist.all_reduce(size, op=dist.ReduceOp.MIN, group=cpu_group)
+        batch_size = int(size)
     dtype = torch.complex64 if toggle else torch.float32
     if torch.get_default_dtype() == torch.float64:
         dtype = torch.complex128 if toggle else torch.float64

@@ -211,3 +211,26 @@ def test_reconstruct_parallel_with_torchrun(tmp_path):
         devices=["cpu"],
     )
     assert torch.equal(distributed["output"], output) and torch.equal(distributed["path"], path)
+
+
+def test_optimal_batch_size():
+    from phaseretrieval import OptimalBatchSize
+
+    l2 = 96 * 2**20  # RTX 6000 Ada, where the rule was measured
+    assert [OptimalBatchSize(s, s, l2_cache=l2) for s in (256, 512, 1024, 4096)] == [32, 8, 2, 1]
+    assert OptimalBatchSize(512, 512, l2_cache=l2, dtype=torch.complex128) == 4
+    assert OptimalBatchSize(512, 512, device="cpu") == 8
+    if torch.cuda.is_available():
+        l2_gpu = torch.cuda.get_device_properties(0).L2_cache_size
+        assert OptimalBatchSize(512, 512, "cuda:0") == max(1, l2_gpu // (6 * 512 * 512 * 8))
+
+
+def test_results_do_not_depend_on_the_batch_size():
+    amplitude, support, unknown = _data()
+    stages = [(10, dict(HIO, interval=5, **SW)), (10, GPS)]
+    runs = [
+        ReconstructParallel(amplitude, support, unknown, stages, 5, batch_size=b, devices=["cpu"])
+        for b in (1, 2, 5)
+    ]
+    for output, path in runs[1:]:
+        assert torch.equal(output, runs[0][0]) and torch.equal(path, runs[0][1])

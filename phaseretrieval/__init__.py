@@ -25,11 +25,12 @@ from .func import (
     phase,
     sqmesh,
 )
-from .parallel import ReconstructParallel
+from .parallel import OptimalBatchSize, ReconstructParallel
 
 __all__ = [
     "PhaseRetrieval",
     "ReconstructParallel",
+    "OptimalBatchSize",
     "SubpixelAlignment",
     "PairwiseDistance",
     "PRTF",
